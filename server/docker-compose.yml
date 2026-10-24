@@ -1,0 +1,26 @@
+# Ferry relay server. From the repo root:
+#   cp server/.env.example server/.env   # set DATABASE_URL, INVITE_CODE and the APNs values
+#   mkdir -p server/secrets && cp AuthKey_XXXX.p8 server/secrets/apns.p8
+#   docker compose -f server/docker-compose.yml up -d --build
+# No host port is published: put your reverse proxy (HTTPS) on the same Docker network
+# and point ferry.thedevlab.cloud at ferry-server:3000.
+services:
+  ferry:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: ferry-server
+    container_name: ferry-server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "true"
+    volumes:
+      - ./secrets:/secrets:ro
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

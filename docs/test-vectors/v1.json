@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "description": "Ferry crypto test vectors (docs/PROTOCOL.md §3). Binary values are base64url without padding unless suffixed _hex.",
+  "umk_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "keyId": "8eFRQkHrL0KgK9rSbOWoGg",
+  "subkeys_hex": {
+    "event": "d8440b0cdf55ca20be96b44178e4abcda96b184b904e63acac98b019acdd7094",
+    "profile": "747ecbdd67947aaaa568cc59acc25118909ab4c3967fcaaadc523cb78bfc4803",
+    "recovery": "df35cfa2ca27533dbdab732097a5340a5ae12e5e7792713d94802b3ea5ff3a55"
+  },
+  "padding": [
+    {
+      "plaintextBytes": 0,
+      "paddedLength": 256
+    },
+    {
+      "plaintextBytes": 1,
+      "paddedLength": 256
+    },
+    {
+      "plaintextBytes": 254,
+      "paddedLength": 256
+    },
+    {
+      "plaintextBytes": 255,
+      "paddedLength": 256
+    },
+    {
+      "plaintextBytes": 256,
+      "paddedLength": 512
+    },
+    {
+      "plaintextBytes": 2047,
+      "paddedLength": 2048
+    },
+    {
+      "plaintextBytes": 2048,
+      "paddedLength": 4096
+    },
+    {
+      "plaintextBytes": 65534,
+      "paddedLength": 65536
+    },
+    {
+      "plaintextBytes": 65535,
+      "paddedLength": 65536
+    },
+    {
+      "plaintextBytes": 65536,
+      "paddedLength": 131072
+    },
+    {
+      "plaintextBytes": 100000,
+      "paddedLength": 131072
+    },
+    {
+      "plaintextBytes": 262143,
+      "paddedLength": 262144
+    }
+  ],
+  "events": [
+    {
+      "name": "sms-ascii",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000a1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000e001",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000a1:0192c2a0-0000-7000-8000-00000000e001",
+      "plaintext": "{\"t\":\"sms\",\"occurredAt\":1761292800000,\"sim\":{\"slot\":0,\"subscriptionId\":3,\"carrier\":\"Vodafone\",\"number\":null},\"from\":\"+4915112345678\",\"body\":\"Your code is 123456\"}",
+      "plaintextBytes": 162,
+      "paddedLength": 256,
+      "nonce": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZX",
+      "ct": "NFUQnbfKTYS5X7AsBZU9nEWicrEf7ZMB-WgfkVm1B64RukXLC2BqomXLJc28gyju85OztxfhH93WkWKUKDsZFjmlv6OC8S-66jw8VwButNzvvemcG91CKwxdcYIODHRk8OQmfVjQrfbUKlmwo88evs5uxQRJzPqM73IhcGl4X1r9nvp0VIGLy07WB75IU6Hl-1B6ic8Z0vvUfRwDxOzrL8tCxHi26UZYogKX-uUVtXj3U2CrnaCdiogg8yjG1j3zouv0HgODxCI7s4hyTxvWsWao0xBZsQd27p89uzk2gFT9RFL1SFUmf6AZECKUZO7NLjMtM5w8FGnAKKH62VUrSUcw5_b0GW5wmiKN3JvpDCI"
+    },
+    {
+      "name": "sms-unicode",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000a1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000e002",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000a1:0192c2a0-0000-7000-8000-00000000e002",
+      "plaintext": "{\"t\":\"sms\",\"occurredAt\":1761292801000,\"sim\":{\"slot\":1,\"subscriptionId\":4,\"carrier\":null,\"number\":null},\"from\":\"Mom\",\"body\":\"مرحبا! كيف حالك؟ 🚢\"}",
+      "plaintextBytes": 160,
+      "paddedLength": 256,
+      "nonce": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldY",
+      "ct": "l2zc7STCdEvOHItKeZQrWAHoJwMdDlBVqhqvomVMKBEdub3kZ0wBjfxasFPaifwzHLtCHCfIjb676xmaZgzxeBkSq3wmVf-CzMCMDEFELhU58ps69llkbsKXkfEJKVb_eMbadr7pnd6vjNTswk9Akr-VgiVbbBY7saXJfTlc5UoHAFHt1ptEAlTKYaGdGJHZUgTag-BYapfIzRp4K_Xd-UglE_wbz3px0qX02TgnTL9BrjovAamddWz5p-FkJK2WPzfgpmeyWPIFM5aXv68yRXPXfBG1N_HiAZJEdKhpeLU473815tXGBRkwx5JHnIxb6cHwqkj_2egjOfL9GKBzO6CKXvkK1r5zPijjmPtzMxQ"
+    },
+    {
+      "name": "call-missed",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000a1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000e003",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000a1:0192c2a0-0000-7000-8000-00000000e003",
+      "plaintext": "{\"t\":\"call\",\"occurredAt\":1761292802000,\"sim\":{\"slot\":0,\"subscriptionId\":3,\"carrier\":\"Vodafone\",\"number\":null},\"from\":\"+4915112345678\",\"state\":\"missed\",\"durationSec\":0,\"callKey\":\"c1\"}",
+      "plaintextBytes": 182,
+      "paddedLength": 256,
+      "nonce": "QkNERUZHSElKS0xNTk9QUVJTVFVWV1hZ",
+      "ct": "6t5UTK9uqaLIUmH0Zq-GOGYtxqCUoMyBuA9PkcTSwcs6CGrxix3YhPMsJlHG2SyXdiL2jUylvdUXvDa2BiazZoUKOUGsUeYGGhgTqjb688OiNyioblYcgRkZj-Td7Xa1SGGBm5EvySizX3VSMES6iA_k6BpHDbzPIs-vhVD-mi4tph7fqmCdyHp6ujK9ALpeaqJdMg8JRSz6Ii23U_yDq53FqLLDGMPmEwkrB3Rep9mgmvN2UudLt8UHhnAVBkWaaEdXZYC1MIskZwtqA6G9P4dg_kpLC1rnAPW6xAtT9sEzAjDaL-3zgObpeSQIE6J8jda_8STueNFpRCXaT_3RL9x9N7cJd9Gwf9dXSU38okQ"
+    },
+    {
+      "name": "notification-large",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000a1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000e004",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000a1:0192c2a0-0000-7000-8000-00000000e004",
+      "plaintext": "{\"t\":\"notification\",\"occurredAt\":1761292803000,\"package\":\"com.whatsapp\",\"appName\":\"WhatsApp\",\"title\":\"Alice\",\"text\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "plaintextBytes": 3119,
+      "paddedLength": 4096,
+      "nonce": "Q0RFRkdISUpLTE1OT1BRUlNUVVZXWFla",
+      "ct": "X2bhBj64OyvAbZkgGW0knGk_NUqiOZz8t618vsNIutUaqKl7DZRf2XTK3qIsx98aRTQK-crkIin_xF61N06bVmbUQgbT_uf83eTkhdFAi-5CtNI8FqnxFPlW4juQGwD_JXM3O9SAuX-H6IyDAssE4Vr9aeQHRcZLIYGT_X4PcWV8Gt6AvOT8DMzavno1Xkf7Pp89XXlxt44qkZi2IiT_mMTRp-vW49P_CviuEvvqc-qEQXLWY8qrNE2hIwAYjMyOz82TK3d45-WPIm2zylpCCcr2cJM0uJrAyYW_R1IjdKkWSfsc-gzRTFsSlEXg5PWIA6sbBHoYCvIF61QiNj_9OQPZ9GPZSrzfc3QTCATb3h12yQolTfV8y6gyvPVU-07taP_Ihh-aYUgdhtMC9S5Esi7rGvmvyrvipIhp-T7MmzGSpvYRN--mQJANDgngh_rLC5kCKS7IwRnjSB_hfKv3OmMJAnnUUAbVl3WUYnt1zpsP4udoAiKwBSwKWXzO_BcC9p-m4tiwSRkX37loPgx3pKv2iSsdgJ99gk4N8b9rVGcPTCv2LUjXqwApHKaSXZ-UhaFwn7ISXjqhRaf-hKn_mgI03jGblVvD80FbM1ptXGZby36-ri1TpsL7arunkLrc98StpA9s8TgRluzqNZ-HoUmmfdTYtRLHS14GliLifwH20rQNz9K_TduKARyaCc1umLqHyRmYgLW3kuC3XdlthAjBAwIzYVh23y7bsi91efykcoUz7CJf66_Mu2TQAWS7SmH8TLI7jiSWeQN2_Fcd--4Y4iR-XBYqgchXSAy05kHyENjwXzxhgUPJgNsxrycf3jG5t4xR9afs_r527Nqfohnr6pkgmKL2zuFg1DdJ8GKeL-3cVf0n-eWM-tYW6jcWUaGr8OqxuBByK8VaXBkuqkHCi0cUzAEQ_kgmK9Y_ZYS6lG7OByvSHrqNtar9n22sC-pqC71JFdE3p4qZZcGxSJmDeHHZvvqrPeXBQRsyHbl0EuXweGvVv7mf5-44w95AJ7X7gf9BUawsZsGVvWU5ES6txNst-4doLfoMyguTV8ZJIqNgDOFQYcNppX3N32yqHawIaEs5EzAoCw_fyNB-D0dfzWaJem5IM0vluOqM15MbrJQSCtgfZIOIVEE7jbqPNg0YcJjOh4tdijTZw_EydagHqOsnBRPnprRffWtuaEk9zskGctIgOuY4X0uSg9cYQG8utLlnA1vTvzU_pmPRsGnjV4XwOHz5emClE9pjZguuhoabROHg__jSFfBDAaMDUMFImEHnK4gCVfMO7TS2Iz2zDxE6X0C7kPN0UA9ESHFmxkW5A0VkR5W9s-j04odRtWgbocxMqCrepcH4eTCJjIBiJ_Xi6kA5XOSEg25rrUP-eAC0rkI4SEOg2m6xk2mapaVNeSaG4wzdTbEK_7qyEKRr_eBsEcRtUrfXlFUYAFshhTPYsuCSbdqSJYvhFvpQ3C3hUcEe6picDieXouddegPSBa4iaNWzl0jgc-QFT6oIwDJoM60lRaEyV0lSedcorxoUQpe6f5ZIMXGqp6ZY0oFKu3gxqFGBYUw4YAUnjzE2VivzGV-mV2EsmR91sR4q8YOgYoDBmw4wnkB05ZlZh7YATwOk0F9hRfAqOnUML0ozYMfZ--pDirsohMWFVzDlCXXwx-ZV_F-CEgaQCkiZ_2TA75y5FLmWb4ugq2NCwhWvPZ5iq-0UwTGAkhd5BRtlOym5KJMDpnWEJ6YCggdjVjEppYuYSkT4QiQuukj-C_LMl9O3oNB5Xm-vvqKoj7xai_h8siMnS_gh5tDf1kPi-BNybBOv2RknkKx_M6RBEtRhQy5hm-vx_M_Yu2VH1HkFN7_hjozDPsQ3TzljnYII29zLT6elNtnkcShYIZSnVZMwMEMLn1MXL1xjNPmse5CNx1e0oKsJPhrGdPmZ9btieA3mtNlPay-3Xj9g8oeWFdviGQTyiyEqHUs1d3L6GtAMLxhP758T5suegBSDindFjQ4x7oPcHbtIPhNddDL_IkfTvOud32naV_tFxfkhq-EK4uurrnM20Ltadm-FLZstJT5H2Ds82PA833B9yPSPlTE8laZJOo3yFFGWkMFBk1SBwp7oaG5QI9Gb4GyTjEF8JcsJL0WhsjHafYHPyKRmm52EFrbpojpoLMKKiZLZO9Z67SYmwg0ydTf1xRoxZWw0Id7lImBjKHTQ4equFakokHMbxsHhevOdP8-IcCjSgOVPX2fpNB5bpK4LkyrROmK_U8GNgaa9V3yvfOOTpTBjd76TRHIe7UuSNONe7aZ41NCQFh5hPgyCKbRlNKvKbwnBrt4Q524w_oHsJScHgJAi7hwoFaHl21p036CMLlXzFJMaoOEYi_iH4ta1TUTZf07KcRxU0EKPLEXdqjW-fEQ7bvnBFw5xJt1QyKyIzaa4ETGTihjJR8FZ8MCSM2dyTnT_n6cj1uXFnUe99G-9oGFghnzWgEokK4VW1I4uy1q6xH1bS2rYKS7YjlzanfyFzrpGFl7vfDXmaYti_1sWj5I0AOygo1b8aSRpKEg5xCqCY7k63mqG_QTfhoAuvyFtUeLIoL7Vf9-vMqUvSGXAbkYSRSVEOUAYlVopDNxV8jLagCWmb3cD3H6G8r7--TCYTclzX90sM_3pEo3P6sJdvvQPp9T-qTx_SXLPr-bIZc_BFK471SOwXsasFicaeLatz5tLT0990pVK37DCixn3DbWzmz_gVt3wK3OdJKmSPWS50nxGa_k9mobM_R62pYdE7BJ0qb1SyNR4SqlixycYNQ4ALLwLhPma2b6-zS2WFgH6mb5Pehtpc9zsvILWijcq9UL85_HLzhuVCPwXWdxSF6Kaa-hdE5DaCtimhaUGkHr-NDs3gKYR6SaZrN0NEsMJROdP87mqF6tpMfDDXY-f6IqVuVDOoCEmDhUTFPAaEjemBrWQeZUG26oVwSAMIrvy5nKqX7EJK7KHy9bmVm_spVn4DE6QhH1p_Qnde0M3RN_fU99Rlcx4R3aBt6axVZx70u99NGsmzT7Sgq00RkwD7heOgyismzq8nHQfYSmO-eaxdSfGeCHmUXkeI6P5jgjCEBloycmTckhKO5pw-c3kVPywDhUw8iUmJdwkNlDdFJF2Pu94tJTfK6lhjPTEWB17eR20Ic2ILTYEaZ61GwIbdv8YBnez9ZeSvGdk-27J1oeUjmqMb5FiK50FesvIf2S43PbQCWAeKAzmGinTJ1KoDtfRdm6HRkoJ6gXKPDgAB5FCZDgkDlM0U_btA95vx4d5M3HDypxoeJYX0Y9NtIDsNRmCFFySMSBLVazGVvfJvSgKMSHNBxcO-Ncf51XUDiH88Xph3kH3kCjip3iON_wbKrde4LT1ziZo-RYmdCvpRdDmblvp_hKcxrmaNurwNUP20ORExqw7gSxe7Huk5zZXid2B5cU4PM7ORqoa9mN_matE-slL9LFPFbn-WUQc8plFkP_SkO9IrYnUGxAMk56-95MK0hxhkYNR7_SOYgtX6gOhYSUnnNRrywAxar5G1WKraegbpfF17-FKCQBhmz4Pdi7CcnfBcKrpUhVpxLTxEleYPN-vrDPy_AlweVWPhFUW6lIe54eETDvBjw35G_fAhWEAiU7-sc9EwiERZkzqBHAHkNyVmGr8-JruhPZKDQ6pj8WaTIpSue73huaUuPNuQEgxdsMiNIbX59Jytn3dx34MoTHAVgPzefdpdX7-crDCRPUh7Zb1A2jFyqRywTfmjcHLV9i1XBjDNIK92y3McyELKrrbzwpkcTgiNWGojbQPsc-Rt0GVexwmOL0wXWpkAk5OeFOzudDr9b5w4LVORFxj4goJhdyAHBqtIYZgY2aywYaYUUuiYFwaLR3yFILQwSp0GskCjREp_c5y_FAOIT9OrOHhR-CLuwM1oUjFmvvo_Tbv8qzoerCuM-4H2hm8e49cQOyaz5XGV0sQzXfSfNDBH5dfvhFsbGjwo5ejE16_RkCOwRF_bF3NAM1bPRzYOr_fa0bV7wDTeJVAl3W7iZWkXma7bzC_NonsREjxNASCi2v-YLhWaML-EeepILF0pa0fkiKE66rN1PzXDYfwq586u6UlFW6cTNnKrwJwDo1wbFc0f57m079zrkVZKz9twQ0bqN17FAbpv4LuSX0Tyw3r_hXvp1c0eswdOMGWLpW-fas5jk5fZF57ylCFgBtM-5djTT1wbxJJf7vOqUL7pkYrAlpy5mPLQ5dm0AkTAI-DhN8-1WVpw1lr1ByzyQGVgtEDyvperU3wIIP8HS71W-5FatNW66IDEvW12OwSK0O1j4sdvywJ9oqKfLZABg5cc0TrOwGR_sKo_33uYKe7iELdTzt0FCd-Ixj-p5uJaivesWnKdyWEwoQ_QCdAAxKbsD1qOqhJHuN7cMMO6t-gCVrWFdwJ1oBimkl1e5S-rW3H-PFxdWnYurvVZ58K9efeSv7yG4Zjc60ysD8Kg2-y2_2t0GvtFcHoWaW-JeARbNP9yO7bWrQwFD1Cd2Ncspi8j3yAefgPnJxjkWXNcjs0znlHEJjPV5V_GG9UZP9i-VWAPH5VWCSG-JQca9M1y0LU8EFE39Rv4Lin3qZVpZjvR8P2HoxdxJ8ocRgXpEYvivRkq9Ii8NywCMW0Uuvyis8ZBk9oJEKlbVly2bEAX5QkQk6_tT4lBfwOy66GH0k5ByfIbrXwa9xH78Yo2Pp_pM6oVku1T0fvr7kz8B3PMsbgPtM9-snDLVBGsHJl86DdpcK8ZF_m1aAJ295ddsAG8St2KHECKjeugthq-EVApB4pBQp721dh6UKeaPN27zAMkmb4KzC0F6r01u_6x99TBH_p4Zi8BM4RymLLMeFA43zHzzyiXU-w4r0Amhmf87M6iT7xHHVC_INim86D67JXPlkV7joY_PEBIkC_MmJRDqUXWJg9maT4PasLFr8GPao4vGinWUs7RwA5QrIhlBKkoSl6Qy-o3MQdRVUaCwKeJMoz6VaN1CZXdNV_8qhUvRXmEVa3R9jRw_LzDfpNj6VlzWC1ZsnICeLAlO_6a_aCHk2fLvpcbR8eKCM25rCeLPwc3lmiQgaqnH6UjEtRj7rNn5_0-Mer5Si1J0FsDEd7raX0wLr004aepIx-jgdpUPrKnsajyFtNo7c8oo4_GLSUqR3uQJIPh7-Rc2zdRVqTI88Gtm-K9bLHnV5pj0bg6f7H5BbnEYuIG6bCqigogHyHbOausmx6pC36EjK4_6XgZngCb_TJRFQngcBXJqWfLLXxuFpEf-WZnjF8IN-IU1vOBkVmJ2BZuvdq5DYLuvrkCr72n4A4zlVI6kuzZ9hbWEmBxYPRSzkD0nfnUGUKLg0Dw3Y2cCC1cb-Gww5-uf3zFx41W6uN0ORxOnUPXBmmWOgFvL8EgJtGOwSBI4-ejf668i3RA5sAnuVQDdh5JQJM1jOTHHNDfBkVuzNLIkNQOnzJ5k_V5cuvOnGqXXrtgiAO8aqB6Dh6P-8"
+    }
+  ],
+  "profile": {
+    "userId": "0192c2a0-0000-7000-8000-000000000001",
+    "deviceId": "0192c2a0-0000-7000-8000-0000000000a1",
+    "version": 1,
+    "ad": "ferry:v1:profile:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000a1:1",
+    "plaintext": "{\"name\":\"Work phone\",\"sims\":{\"0\":\"Work SIM\",\"1\":\"Travel SIM\"}}",
+    "nonce": "gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaX",
+    "ct": "13WZ_kkoKLBJXvJVV7DZpTpKFmWc6PRWhk2osQ9GQfYRT-6Gg7hNJVKhojGnv2puTkUwX_iHaVg9NqGQms6CttDWYBNkB8KyBSsvpU5e5C963EDZjxrlYINOD8_SIH3U7-_uLGmgUJ_2rYFxvjlTLxkGzAchfhFiTpBQLtwXbQ8CUB4MiybaG8JpIC6u-HI_BSl3IY3L5VXWCaKZrfHAzkQ6n45TC4GsFSptO15wyY2LzchD98T6vJ1Gp0rqW-C4MRzLaJorboARgHgkAN-WikDPwQai9axoUKArsLolD69LtwEeM6ttmkyG8_Eapv4pudf5byIDILxlMU2kA4mGnP5Giwyb4P_cOzBkCoGeA1Q"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@ferry/crypto",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "vectors": "node src/vectors.ts > ../../docs/test-vectors/v1.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "0.8.4"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "0.7.14",
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Ferry" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ferry_background</item>
+    </style>
+
+    <style name="Theme.Ferry.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/ic_launcher_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_boat_animated</item>
+        <item name="windowSplashScreenAnimationDuration">900</item>
+        <item name="postSplashScreenTheme">@style/Theme.Ferry</item>
+    </style>
+</resources>

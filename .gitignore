@@ -1,0 +1,41 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+
+# Secrets — never commit
+*.p8
+*.p12
+*.jks
+*.keystore
+keystore.properties
+google-services.json
+GoogleService-Info.plist
+
+# Server data
+server/data/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+
+# iOS
+ios/build/
+ios/DerivedData/
+xcuserdata/
+*.xcuserstate
+
+.DS_Store
+
+# Gradle build outputs in any module
+android/**/build/
+android/.kotlin/
+ios/Ferry.xcodeproj/
+
+# Server secrets (APNs key) and env
+server/secrets/

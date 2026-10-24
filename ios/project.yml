@@ -1,0 +1,137 @@
+# XcodeGen spec. Run `xcodegen` in this folder to produce Ferry.xcodeproj (not committed).
+# Change settings here, not in Xcode: edits to the generated project are lost on regeneration.
+name: Ferry
+options:
+  bundleIdPrefix: tech.thedevlab
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: 65VM3R98FD
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  # Encrypted inbox at rest (PROTOCOL.md §9.1).
+  SQLCipher:
+    url: https://github.com/sqlcipher/SQLCipher.swift
+    exactVersion: 4.19.0
+
+targets:
+  FerryKit:
+    type: framework
+    platform: iOS
+    sources: [FerryKit]
+    dependencies:
+      - package: SQLCipher
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry.kit
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+
+  Ferry:
+    type: application
+    platform: iOS
+    sources:
+      - Ferry
+    dependencies:
+      - target: FerryKit
+      - target: FerryNSE
+      # FerryKit links SQLCipher dynamically; the app embeds it for itself and the extension.
+      - package: SQLCipher
+    entitlements:
+      path: Ferry/Ferry.entitlements
+      properties:
+        aps-environment: development
+        com.apple.security.application-groups: [group.tech.thedevlab.ferry]
+    info:
+      path: Ferry/Info.plist
+      properties:
+        CFBundleDisplayName: Ferry
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        ITSAppUsesNonExemptEncryption: false
+        # Lets a build talk to a server on the local network (e.g. a Mac at name.local); has no effect on internet hosts.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Ferry connects to a Ferry server on your local network when you set one up there.
+        NSCameraUsageDescription: Ferry uses the camera to scan the pairing code shown on your other device.
+        NSFaceIDUsageDescription: Ferry asks for Face ID before showing a pairing code, because it contains your encryption key.
+        CFBundleURLTypes:
+          - CFBundleURLName: tech.thedevlab.ferry.pair
+            CFBundleURLSchemes: [ferry]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Icons regenerate from design/icon/make_icons.py.
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: AppIcon-Ocean AppIcon-Paper
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  FerryNSE:
+    type: app-extension
+    platform: iOS
+    sources: [FerryNSE]
+    dependencies:
+      - target: FerryKit
+        embed: false
+    entitlements:
+      path: FerryNSE/FerryNSE.entitlements
+      properties:
+        com.apple.security.application-groups: [group.tech.thedevlab.ferry]
+    info:
+      path: FerryNSE/Info.plist
+      properties:
+        CFBundleDisplayName: Ferry Notifications
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry.nse
+        TARGETED_DEVICE_FAMILY: "1"
+
+  FerryKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [FerryKitTests]
+    dependencies:
+      - target: FerryKit
+      - package: SQLCipher
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry.kit.tests
+
+  FerryUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [FerryUITests]
+    dependencies:
+      - target: Ferry
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry.uitests
+        TEST_TARGET_NAME: Ferry
+
+schemes:
+  Ferry:
+    build:
+      targets:
+        Ferry: all
+    test:
+      targets: [FerryKitTests, FerryUITests]

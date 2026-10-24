@@ -1,0 +1,12 @@
+{
+  "name": "ferry",
+  "private": true,
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "pnpm -r test",
+    "vectors": "pnpm --filter @ferry/crypto vectors"
+  }
+}

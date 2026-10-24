@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:drawable="@drawable/splash_boat">
+    <target android:name="boat">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:propertyName="translateX" android:duration="900"
+                    android:valueFrom="-10" android:valueTo="0"
+                    android:interpolator="@android:interpolator/decelerate_cubic" />
+                <objectAnimator android:propertyName="translateY" android:duration="450"
+                    android:valueFrom="0" android:valueTo="-2.5" android:repeatCount="1" android:repeatMode="reverse"
+                    android:interpolator="@android:interpolator/accelerate_decelerate" />
+                <objectAnimator android:propertyName="rotation" android:duration="450"
+                    android:valueFrom="-4" android:valueTo="2" android:repeatCount="1" android:repeatMode="reverse"
+                    android:interpolator="@android:interpolator/accelerate_decelerate" />
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

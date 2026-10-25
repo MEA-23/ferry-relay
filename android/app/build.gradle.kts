@@ -43,8 +43,8 @@ android {
         // Android 6, so an old spare phone can relay (it only needs to be a node).
         minSdk = 23
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         buildConfigField("String", "DEFAULT_SERVER", "\"https://ferry.thedevlab.cloud\"")
         for (key in listOf("FCM_PROJECT_ID", "FCM_SENDER_ID", "FCM_APP_ID", "FCM_API_KEY")) {
             buildConfigField("String", key, "\"${firebase[key].orEmpty()}\"")

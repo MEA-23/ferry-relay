@@ -13,6 +13,10 @@ struct InboxView: View {
     /// Messages whose text matches `search`, from every thread, newest first.
     @State private var results: [Message] = []
     @State private var path = NavigationPath()
+    @State private var composing = false
+    /// A conversation a new message went into, opened once the sheet has gone: pushing while it
+    /// slides away drops the conversation's scroll and leaves it blank.
+    @State private var sentThread: String?
 
     private var query: String { search.trimmingCharacters(in: .whitespaces) }
 
@@ -75,6 +79,23 @@ struct InboxView: View {
                 results = (try? Inbox.shared.search(query)) ?? []
             }
             .refreshable { await model.refresh() }
+            .toolbar {
+                if !model.sendOptions.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("New message", systemImage: "square.and.pencil") { composing = true }
+                    }
+                }
+            }
+            .sheet(isPresented: $composing, onDismiss: {
+                guard let thread = sentThread else { return }
+                sentThread = nil
+                path.append(ThreadRoute(threadKey: thread))
+            }) {
+                NewMessageView { thread in
+                    sentThread = thread
+                    composing = false
+                }
+            }
             .onChange(of: model.openThread, initial: true) { _, thread in
                 guard let thread else { return }
                 path = NavigationPath([ThreadRoute(threadKey: thread, latest: true)])

@@ -143,7 +143,10 @@ fun OnboardingScreen(vm: AppViewModel, deepLink: String?, onDeepLinkUsed: () -> 
                     Step.Method -> {
                         if (source) Illustration(R.drawable.art_source, Modifier.fillMaxWidth())
                         Title("Is this your first Ferry device?", null)
-                        ChoiceRow(Icons.Default.AddCircleOutline, Brand.Teal, "Yes, start fresh", "Creates your account and a new encryption key on this phone.") {
+                        ChoiceRow(
+                            Icons.Default.AddCircleOutline, Brand.Teal, "Yes, start fresh",
+                            if (source) "Creates your account here." else "Creates your account and a new encryption key on this phone.",
+                        ) {
                             step = Step.Create
                         }
                         ChoiceRow(Icons.Default.QrCodeScanner, Brand.Ocean, "No, pair with my device", "Scan the code shown by a phone that's already set up.") {
@@ -152,7 +155,14 @@ fun OnboardingScreen(vm: AppViewModel, deepLink: String?, onDeepLinkUsed: () -> 
                     }
 
                     Step.Create -> {
-                        Title("Create your account", "A new encryption key is made on this phone. It never leaves your devices — the server only ever sees scrambled data.")
+                        Title(
+                            "Create your account",
+                            if (source) {
+                                "Next, you'll scan this phone's code with the phone you read messages on."
+                            } else {
+                                "A new encryption key is made on this phone. It never leaves your devices — the server only ever sees scrambled data."
+                            },
+                        )
                         Text("Server", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         ChoiceRow(
                             Icons.Default.VerifiedUser, Brand.Teal, "Ferry server",
@@ -180,7 +190,14 @@ fun OnboardingScreen(vm: AppViewModel, deepLink: String?, onDeepLinkUsed: () -> 
                     }
 
                     Step.Join -> {
-                        Title("Pair with your device", "On a device that's already set up, open Ferry → Pair a device, then scan the code it shows.")
+                        Title(
+                            "Pair with your device",
+                            if (source) {
+                                "On a phone that reads your messages, open Ferry → Devices → Pair a device → Relay its own SIMs, then scan the code it shows."
+                            } else {
+                                "Scan the code on a phone that's already set up: Ferry → Pair a device on one you read messages on, or the code a new relaying phone shows."
+                            },
+                        )
                         Button(
                             {
                                 if (context.granted(Manifest.permission.CAMERA)) step = Step.Scan else cameraPermission.launch(Manifest.permission.CAMERA)
@@ -193,7 +210,7 @@ fun OnboardingScreen(vm: AppViewModel, deepLink: String?, onDeepLinkUsed: () -> 
                         }
                         FerryField(
                             "…or paste the pairing link", Icons.Default.Link, link, { link = it },
-                            placeholder = "ferry://pair?…", singleLine = false, monospace = true,
+                            placeholder = "ferry://…", singleLine = false, monospace = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
                         )
                         if (link.isNotBlank()) {

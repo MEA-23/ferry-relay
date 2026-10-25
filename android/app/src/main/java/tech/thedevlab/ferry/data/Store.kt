@@ -8,10 +8,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.SetSerializer
 import kotlinx.serialization.builtins.serializer
 import tech.thedevlab.ferry.crypto.FerryCrypto
 import tech.thedevlab.ferry.model.FerryJson
 import tech.thedevlab.ferry.model.Sim
+import tech.thedevlab.ferry.model.StatusEvent
 import java.security.KeyStore
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -26,8 +28,8 @@ enum class Role(val wire: String) { SOURCE("source"), RECEIVER("receiver") }
 data class CurrentCall(val callKey: String, val number: String?, val sim: Sim?, val startedAt: Long, val answered: Boolean = false)
 
 /**
- * App settings. Secrets (the UMKs, the device token and the database key) are encrypted with an
- * Android Keystore key that never leaves the device; the rest is plain SharedPreferences.
+ * App settings. Secrets (the UMKs or a node's own key, the device token and the database key) are
+ * encrypted with an Android Keystore key that never leaves the device; the rest is plain SharedPreferences.
  */
 class Store(context: Context) {
     private val prefs = context.getSharedPreferences("ferry", Context.MODE_PRIVATE)
@@ -52,8 +54,40 @@ class Store(context: Context) {
         get() = prefs.getStringSet("roles", emptySet())!!.mapNotNull { r -> Role.entries.find { it.wire == r } }.toSet()
     val revoked: Boolean get() = prefs.getBoolean("revoked", false)
 
-    val isPaired: Boolean get() = deviceToken != null && currentUmk != null && !revoked
+    val isPaired: Boolean get() = deviceToken != null && (currentUmk != null || nodeSecretKey != null) && !revoked
     fun has(role: Role) = isPaired && role in roles
+
+    // ── node keys (§3.7) ─────────────────────────────────────────────────────
+
+    /** A source-only phone: it has its own keypair and never the UMK. */
+    val isNode: Boolean get() = prefs.contains("nodeSecretKey")
+
+    val nodeSecretKey: ByteArray? get() = secret("nodeSecretKey")?.let(FerryCrypto::fromB64u)
+
+    /** The key this node shares with the receivers; null until its first receiver answers (§5.6 flow A). */
+    val nodeRoot: ByteArray? get() = secret("nodeRoot")?.let(FerryCrypto::fromB64u)
+
+    /** A node that's waiting for a receiver to scan its code before it can encrypt anything. */
+    val awaitingKey: Boolean get() = isPaired && isNode && !prefs.contains("nodeRoot")
+
+    fun saveNodeIdentity(serverUrl: String, userId: String, deviceId: String, token: String, secretKey: ByteArray) = edit {
+        putString("serverUrl", serverUrl.trimEnd('/'))
+        putString("userId", userId)
+        putString("deviceId", deviceId)
+        putStringSet("roles", setOf(Role.SOURCE.wire))
+        putString("deviceToken", seal(token))
+        putString("nodeSecretKey", seal(FerryCrypto.toB64u(secretKey)))
+        putBoolean("revoked", false)
+        putLong("liveSince", System.currentTimeMillis())
+    }
+
+    /** The account public key, which a node puts in the codes it shows to introduce other nodes. */
+    val accountPublicKey: ByteArray? get() = prefs.getString("accountPublicKey", null)?.let(FerryCrypto::fromB64u)
+
+    fun saveNodeRoot(root: ByteArray, acctPk: ByteArray) = edit {
+        putString("nodeRoot", seal(FerryCrypto.toB64u(root)))
+        putString("accountPublicKey", FerryCrypto.toB64u(acctPk))
+    }
 
     /** keyId → UMK. Receivers keep old keys so events from before a rotation stay readable (§5.5). */
     val umks: Map<String, ByteArray>
@@ -91,6 +125,8 @@ class Store(context: Context) {
         remove("deviceToken")
         remove("umks")
         remove("currentKeyId")
+        remove("nodeSecretKey")
+        remove("nodeRoot")
         remove("pullCursor")
         putBoolean("revoked", true)
     }
@@ -113,6 +149,16 @@ class Store(context: Context) {
     var profileVersion: Long
         get() = prefs.getLong("profileVersion", 0)
         set(value) = edit { putLong("profileVersion", value) }
+
+    /** Lets receivers text numbers this phone has never exchanged texts with (§6.6). Off by default. */
+    var allowNewNumbers: Boolean
+        get() = prefs.getBoolean("allowNewNumbers", false)
+        set(value) = edit { putBoolean("allowNewNumbers", value) }
+
+    /** The phone and SIM the last new message went out from, as [tech.thedevlab.ferry.ui.SendOption.id]. */
+    var lastSendOption: String?
+        get() = prefs.getString("lastSendOption", null)
+        set(value) = edit { putString("lastSendOption", value) }
 
     var currentCall: CurrentCall?
         get() = prefs.getString("currentCall", null)?.let { FerryJson.decodeFromString(CurrentCall.serializer(), it) }
@@ -176,6 +222,29 @@ class Store(context: Context) {
         get() = prefs.getString("remoteSimLabels", null)
             ?.let { FerryJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), it) } ?: emptyMap()
         set(value) = edit { putString("remoteSimLabels", FerryJson.encodeToString(MapSerializer(String.serializer(), String.serializer()), value)) }
+
+    /** deviceId → b64u public key of each trusted node, from the profiles receivers sealed (§3.7). */
+    var trustedNodes: Map<String, String>
+        get() = prefs.getString("trustedNodes", null)
+            ?.let { FerryJson.decodeFromString(MapSerializer(String.serializer(), String.serializer()), it) } ?: emptyMap()
+        set(value) = edit { putString("trustedNodes", FerryJson.encodeToString(MapSerializer(String.serializer(), String.serializer()), value)) }
+
+    /** Public keys of nodes that were removed. Never trusted again, whatever the server says (§3.7). */
+    var removedNodeKeys: Set<String>
+        get() = prefs.getString("removedNodeKeys", null)?.let { FerryJson.decodeFromString(SetSerializer(String.serializer()), it) } ?: emptySet()
+        set(value) = edit { putString("removedNodeKeys", FerryJson.encodeToString(SetSerializer(String.serializer()), value)) }
+
+    /** deviceId → the newest status each relaying phone sent (§4.5), for its battery and missing permissions. */
+    var remoteStatuses: Map<String, StatusEvent>
+        get() = prefs.getString("remoteStatuses", null)
+            ?.let { FerryJson.decodeFromString(MapSerializer(String.serializer(), StatusEvent.serializer()), it) } ?: emptyMap()
+        set(value) = edit { putString("remoteStatuses", FerryJson.encodeToString(MapSerializer(String.serializer(), StatusEvent.serializer()), value)) }
+
+    /** The permissions this phone last reported, so a change can be reported straight away. */
+    var reportedPermissions: Map<String, Boolean>?
+        get() = prefs.getString("reportedPermissions", null)
+            ?.let { FerryJson.decodeFromString(MapSerializer(String.serializer(), Boolean.serializer()), it) }
+        set(value) = edit { putString("reportedPermissions", value?.let { FerryJson.encodeToString(MapSerializer(String.serializer(), Boolean.serializer()), it) }) }
 
     fun remoteSimLabel(deviceId: String, slot: Int): String = remoteSimLabels["$deviceId:$slot"]?.takeIf(String::isNotBlank) ?: "SIM ${slot + 1}"
 

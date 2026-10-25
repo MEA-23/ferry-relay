@@ -13,6 +13,7 @@ public struct APIError: LocalizedError, Sendable {
         case "unauthorized": "This device was removed from your Ferry account."
         case "key_rotated": "Your account's encryption key changed. Pair this device again."
         case "profile_stale": "These names were just changed on another device. Try again."
+        case "key_set": "That account already has a phone that reads messages. Pair from that phone instead."
         case "not_found": "That's no longer on your account. Refresh and try again."
         case "forbidden" where message.contains("invite"): "The invite code is wrong."
         case "forbidden" where message.contains("Pairing code"):
@@ -58,7 +59,21 @@ public struct RegisterDeviceRequest: Codable, Sendable {
 public struct RegisteredDevice: Codable, Sendable {
     public let deviceId: String
     public let token: String
-    public let keyId: String
+    /// Null on an account a node created, until its first receiver sets it (§5.6).
+    public let keyId: String?
+}
+
+/// A §5.6 mailbox message: a public key, and a MAC proving it came from whoever has the QR code's secret.
+public struct PairingMessage: Codable, Sendable {
+    public let deviceId: String
+    public let publicKey: String
+    public let mac: String
+
+    public init(deviceId: String, publicKey: String, mac: String) {
+        self.deviceId = deviceId
+        self.publicKey = publicKey
+        self.mac = mac
+    }
 }
 
 public struct SealedProfile: Codable, Sendable {
@@ -150,12 +165,33 @@ public struct API: Sendable {
         try await sendNoContent("PUT", "/v1/devices/\(id)/profile", body: profile)
     }
 
+    /// §5.6: the first receiver sets the account key ID, once.
+    public func setInitialKey(_ keyId: String) async throws {
+        try await sendNoContent("POST", "/v1/keys/initial", body: ["keyId": keyId])
+    }
+
+    public func sendPairingReply(code: String, _ message: PairingMessage) async throws {
+        try await sendNoContent("POST", "/v1/pairing/\(code)/reply", body: message)
+    }
+
+    public func pairingReply(code: String) async throws -> PairingMessage? {
+        struct Reply: Decodable { let message: PairingMessage? }
+        let reply: Reply = try await send("GET", "/v1/pairing/\(code)/reply")
+        return reply.message
+    }
+
+    /// §6.6: queues a command, sealed to one node.
+    public func sendCommand(nodeId: String, id: String, sealed: FerryCrypto.Sealed) async throws {
+        try await sendNoContent("POST", "/v1/devices/\(nodeId)/commands", body: ["id": id, "keyId": sealed.keyId, "nonce": sealed.nonce, "ct": sealed.ct])
+    }
+
     public func putPush(_ id: String, _ reg: PushRegistration) async throws {
         try await sendNoContent("PUT", "/v1/devices/\(id)/push", body: reg)
     }
 
-    public func pull(after: String?, limit: Int = 100) async throws -> EventPage {
-        try await send("GET", "/v1/events?limit=\(limit)" + (after.map { "&after=\($0)" } ?? ""))
+    /// With `wait`, the server holds the request up to that many seconds until an event arrives (§6.5).
+    public func pull(after: String?, limit: Int = 100, wait: Int = 0) async throws -> EventPage {
+        try await send("GET", "/v1/events?limit=\(limit)" + (after.map { "&after=\($0)" } ?? "") + (wait > 0 ? "&wait=\(wait)" : ""))
     }
 
     public func event(_ id: String) async throws -> StoredEvent {

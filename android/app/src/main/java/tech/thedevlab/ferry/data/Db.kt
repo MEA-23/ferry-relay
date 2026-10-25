@@ -1,6 +1,7 @@
 package tech.thedevlab.ferry.data
 
 import android.content.Context
+import androidx.room.AutoMigration
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
@@ -28,6 +29,47 @@ data class OutboxItem(
     val nonce: String,
     val ct: String,
     val createdAt: Long,
+)
+
+/**
+ * A captured event a node keeps until its first receiver answers and it has a key to encrypt
+ * with (§5.6 flow A). The database is encrypted at rest, like everything else here.
+ */
+@Entity(tableName = "pending")
+data class PendingEvent(
+    @PrimaryKey val id: String,
+    val kind: String,
+    val plaintext: String,
+    val createdAt: Long,
+)
+
+/**
+ * A command this node received (§6.6), whether it sent the text or refused it. Its id keeps a
+ * replay from sending twice, the times count towards the rate limit, and the newest ones are the
+ * "Recently sent" list.
+ */
+@Entity(tableName = "sent", indices = [Index("at")])
+data class SentSms(
+    @PrimaryKey val commandId: String,
+    val to: String,
+    val body: String,
+    val at: Long,
+    /** sending · sent · delivered · failed:<reason> */
+    val status: String,
+    /** Handed to the radio, so it counts towards the rate limit. */
+    val dispatched: Boolean,
+)
+
+/** Numbers this node relayed a text or call from, which replies may go to without the SMS store (§6.6). */
+@Entity(tableName = "known_numbers")
+data class KnownNumber(@PrimaryKey val number: String, val at: Long)
+
+/** A pulled event from a node with no trusted profile yet; retried after the next device refresh (§3.7). */
+@Entity(tableName = "held")
+data class HeldEvent(
+    @PrimaryKey val id: String,
+    val json: String,
+    val receivedAt: Long,
 )
 
 /** Events this phone captured and relayed, for the source's "Recent" list. Never leaves the device. */
@@ -60,6 +102,69 @@ interface OutboxDao {
 
     @Query("DELETE FROM outbox")
     suspend fun clear()
+}
+
+@Dao
+interface SentDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(item: SentSms): Long
+
+    @Query("SELECT EXISTS(SELECT 1 FROM sent WHERE commandId = :id)")
+    suspend fun exists(id: String): Boolean
+
+    @Query("SELECT COUNT(*) FROM sent WHERE dispatched = 1 AND at >= :since")
+    suspend fun dispatchedSince(since: Long): Int
+
+    @Query("SELECT * FROM sent WHERE at >= :since")
+    suspend fun since(since: Long): List<SentSms>
+
+    @Query("SELECT * FROM sent ORDER BY at DESC LIMIT :limit")
+    fun recent(limit: Int): Flow<List<SentSms>>
+
+    @Query("UPDATE sent SET status = :status WHERE commandId = :id")
+    suspend fun setStatus(id: String, status: String)
+
+    @Query("DELETE FROM sent WHERE at < :before")
+    suspend fun prune(before: Long)
+}
+
+@Dao
+interface KnownNumberDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(items: List<KnownNumber>)
+
+    @Query("SELECT number FROM known_numbers ORDER BY at DESC LIMIT 5000")
+    suspend fun all(): List<String>
+}
+
+@Dao
+interface PendingDao {
+    @Insert
+    suspend fun insert(item: PendingEvent)
+
+    @Query("SELECT * FROM pending ORDER BY createdAt")
+    suspend fun all(): List<PendingEvent>
+
+    @Query("DELETE FROM pending WHERE id IN (:ids)")
+    suspend fun delete(ids: List<String>)
+}
+
+@Dao
+interface HeldDao {
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(item: HeldEvent)
+
+    @Query("SELECT * FROM held ORDER BY receivedAt")
+    suspend fun all(): List<HeldEvent>
+
+    @Query("SELECT COUNT(*) FROM held")
+    suspend fun count(): Int
+
+    @Query("DELETE FROM held WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("DELETE FROM held WHERE receivedAt < :before")
+    suspend fun prune(before: Long)
 }
 
 @Dao
@@ -106,6 +211,10 @@ data class Message(
     val unread: Boolean,
     /** [TextTools.normalize]d body. Conversation names are matched separately, from the thread list. */
     val searchText: String,
+    /** A text sent from here through a node (§6.6): sending · sent · delivered · failed:<reason>. */
+    val status: String? = null,
+    /** The SIM it came in on, so a reply goes out on the same one. */
+    val subscriptionId: Int? = null,
 )
 
 /** Event ids already handled, so push and pull never show the same event twice (§3.4, §7.3). */
@@ -123,6 +232,29 @@ abstract class MessageDao {
     /** Use [save], which keeps a later call state from being overwritten by an earlier one. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     abstract suspend fun upsert(message: Message)
+
+    @Query("SELECT status FROM messages WHERE rowKey = :rowKey")
+    abstract suspend fun status(rowKey: String): String?
+
+    @Query("UPDATE messages SET status = :status WHERE rowKey = :rowKey")
+    abstract suspend fun setStatus(rowKey: String, status: String)
+
+    /**
+     * A text sent through a node (§6.6), from this phone or another receiver. Keyed by its command,
+     * so the node's copy replaces the one queued here, and it keeps any status that's further along.
+     */
+    @Transaction
+    open suspend fun saveSent(message: Message) {
+        val old = status(message.rowKey)
+        upsert(message.copy(status = listOfNotNull(old, message.status).maxByOrNull(::statusRank)))
+    }
+
+    /** Applies a §4.8 status, which never moves backwards. */
+    @Transaction
+    open suspend fun updateStatus(rowKey: String, status: String) {
+        val old = status(rowKey) ?: return
+        if (statusRank(status) > statusRank(old)) setStatus(rowKey, status)
+    }
 
     /** Saves [message] unless a later state of the same call is already stored. Returns whether it was saved. */
     @Transaction
@@ -160,7 +292,18 @@ abstract class MessageDao {
     @Query("DELETE FROM messages WHERE threadKey = :threadKey")
     abstract suspend fun deleteThread(threadKey: String)
 
+    /** The newest text on this thread, sent or received, whose SIM a reply goes out on (§6.6). */
+    @Query("SELECT * FROM messages WHERE threadKey = :threadKey AND type = 'sms' ORDER BY occurredAt DESC LIMIT 1")
+    abstract suspend fun lastText(threadKey: String): Message?
+
     companion object {
+        fun statusRank(status: String) = when {
+            status == "sending" -> 0
+            status == "sent" -> 1
+            status == "delivered" -> 2
+            else -> 3 // failed:<reason>
+        }
+
         /** A LIKE pattern matching messages whose text contains [query], however it's accented or cased. */
         fun likePattern(query: String): String =
             "%" + TextTools.normalize(query.trim()).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -180,9 +323,20 @@ interface SeenDao {
     suspend fun prune(before: Long)
 }
 
-@Database(entities = [OutboxItem::class, Activity::class, Message::class, Seen::class], version = 1)
+@Database(
+    entities = [
+        OutboxItem::class, Activity::class, Message::class, Seen::class, PendingEvent::class, HeldEvent::class,
+        SentSms::class, KnownNumber::class,
+    ],
+    version = 3,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+)
 abstract class FerryDb : RoomDatabase() {
     abstract fun outbox(): OutboxDao
+    abstract fun sent(): SentDao
+    abstract fun knownNumbers(): KnownNumberDao
+    abstract fun pending(): PendingDao
+    abstract fun held(): HeldDao
     abstract fun activity(): ActivityDao
     abstract fun messages(): MessageDao
     abstract fun seen(): SeenDao

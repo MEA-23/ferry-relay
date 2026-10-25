@@ -2,7 +2,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { Ctx } from '../app.ts';
-import { rolesOf, type DeviceRow, type Queryable, type Role } from '../db.ts';
+import { isNode, rolesOf, type DeviceRow, type Queryable, type Role } from '../db.ts';
 import { ApiError, hashToken, KEY_ID, newToken, NONCE, S, uuidv7 } from '../util.ts';
 
 export interface NewDevice {
@@ -59,7 +59,7 @@ function validatePushToken({ provider, token }: PushBody): void {
   if (!ok) throw new ApiError(400, 'invalid_request', `Malformed ${provider} token`);
 }
 
-export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void {
+export function deviceRoutes(app: FastifyInstance, { db, now, auth, role }: Ctx): void {
   const findOwn = async (userId: string, id: string): Promise<DeviceRow | undefined> =>
     (await db.query<DeviceRow>('SELECT * FROM devices WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL', [id, userId]))
       .rows[0];
@@ -86,6 +86,10 @@ export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void
       requireSelf(req);
       if (req.body.roles.includes('source') && req.device.platform !== 'android') {
         throw new ApiError(400, 'invalid_request', 'Only Android devices can be sources');
+      }
+      // A receiver needs the UMK, which only comes with pairing (§5.3).
+      if (req.body.roles.includes('receiver') && isNode(req.device)) {
+        throw new ApiError(403, 'forbidden', 'A device can only become a receiver by pairing');
       }
       await db.query('UPDATE devices SET roles = $1 WHERE id = $2', [JSON.stringify(req.body.roles), req.device.id]);
       return serializeDevice((await findOwn(req.device.user_id, req.device.id))!);
@@ -125,10 +129,26 @@ export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void
     },
   );
 
+  // §3.7: a node registers the key ID of its own root, once it knows the account public key.
+  app.put<{ Params: { id: string }; Body: { keyId: string } }>(
+    '/v1/devices/:id/key',
+    {
+      preHandler: auth,
+      schema: { params: idParam, body: { type: 'object', required: ['keyId'], properties: { keyId: KEY_ID } } },
+    },
+    async (req, reply) => {
+      requireSelf(req);
+      if (!isNode(req.device)) throw new ApiError(403, 'forbidden', 'Only source-only devices have their own key');
+      await db.query('UPDATE devices SET key_id = $1 WHERE id = $2', [req.body.keyId, req.device.id]);
+      reply.code(204);
+    },
+  );
+
   app.put<{ Params: { id: string }; Body: { version: number; keyId: string; nonce: string; ct: string } }>(
     '/v1/devices/:id/profile',
     {
-      preHandler: auth,
+      // Profiles are sealed with the UMK, which nodes don't have (§3.7).
+      preHandler: [auth, role('receiver')],
       schema: {
         params: idParam,
         body: {
@@ -144,7 +164,7 @@ export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void
       },
     },
     async (req, reply) => {
-      // Any device of the user may name any other device (e.g. naming a source from the iPhone).
+      // Any receiver may name any device (e.g. naming a source from the iPhone).
       const target = await findOwn(req.device.user_id, req.params.id);
       if (!target) throw new ApiError(404, 'not_found', 'Device not found');
       const { version, keyId, nonce, ct } = req.body;
@@ -165,6 +185,7 @@ export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void
     async (req, reply) => {
       const target = await findOwn(req.device.user_id, req.params.id);
       if (!target) throw new ApiError(404, 'not_found', 'Device not found');
+      if (isNode(req.device) && !isNode(target)) throw new ApiError(403, 'forbidden', 'Nodes cannot remove receivers');
       await db.query('UPDATE devices SET revoked_at = $1, push_token = NULL WHERE id = $2', [now(), target.id]);
       reply.code(204);
     },
@@ -173,11 +194,15 @@ export function deviceRoutes(app: FastifyInstance, { db, now, auth }: Ctx): void
   app.post<{ Body: { keyId: string } }>(
     '/v1/keys/rotate',
     {
-      preHandler: auth,
+      preHandler: [auth, role('receiver')],
       schema: { body: { type: 'object', required: ['keyId'], properties: { keyId: KEY_ID } } },
     },
     async (req, reply) => {
-      await db.query('UPDATE users SET key_id = $1 WHERE id = $2', [req.body.keyId, req.device.user_id]);
+      // A new UMK means a new account public key, so every node root goes stale until it re-pairs.
+      await db.tx(async (q) => {
+        await q.query('UPDATE users SET key_id = $1 WHERE id = $2', [req.body.keyId, req.device.user_id]);
+        await q.query('UPDATE devices SET key_id = NULL WHERE user_id = $1', [req.device.user_id]);
+      });
       reply.code(204);
     },
   );

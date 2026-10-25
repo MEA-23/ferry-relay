@@ -23,15 +23,19 @@ final class AppModel {
     /// True until the user authenticates, whenever the app lock is on.
     var locked = UserDefaults.standard.bool(forKey: "ferry.appLock")
     var error: String?
-    /// A `ferry://pair` link opened from outside the app, waiting for the user to confirm.
-    var pendingLink: PairingLink?
+    /// A pairing link opened from outside the app, waiting for the user to confirm.
+    var pendingLink: ScannedCode?
     /// Set when a notification is tapped, so the inbox can open that thread.
     var openThread: String?
     var tab = AppTab.inbox
     /// Opens the pairing sheet on the Devices tab, e.g. from the empty inbox.
     var showPairing = false
+    /// A device to ask about removing, from an introduction's Remove button (§4.7).
+    var removeRequest: String?
 
     private var pushToken: Data?
+    private var live: Task<Void, Never>?
+    private var liveId = UUID()
 
     private init() {
         // Keychain items survive deleting the app; UserDefaults don't. A fresh install starts
@@ -61,8 +65,14 @@ final class AppModel {
         await run { self.didJoin(try await Onboarding.createAccount(server: server, invite: invite)) }
     }
 
-    func join(_ link: PairingLink) async {
-        await run { self.didJoin(try await Onboarding.join(link)) }
+    func join(_ code: ScannedCode) async {
+        await run {
+            switch code {
+            case .receiver(let link): self.didJoin(try await Onboarding.join(link))
+            case .node(let link): self.didJoin(try await Onboarding.joinNode(link))
+            case .intro: throw UserFacingError("This code adds an Android phone that relays its SIMs. Scan it with Ferry on that phone.")
+            }
+        }
     }
 
     private func didJoin(_ account: Account) {
@@ -72,6 +82,7 @@ final class AppModel {
         reloadLocal()
         requestNotifications()
         Task { await refresh() }
+        startLive()
     }
 
     /// Forgets the account on this device. Revokes it on the server first when still possible.
@@ -104,6 +115,38 @@ final class AppModel {
             self.error = Self.describe(error)
         }
         reloadLocal()
+    }
+
+    /// While the app is open, a long poll brings events in the moment they're stored (§6.5),
+    /// sent and delivered updates included, which never come as a push. Push covers the rest.
+    func startLive() {
+        guard live == nil, account != nil else { return }
+        let id = UUID()
+        liveId = id
+        live = Task {
+            while !Task.isCancelled, let account {
+                do {
+                    let start = Date.now, before = Inbox.shared.watermark
+                    // Under the requests' 20-second timeout.
+                    try await Sync(account: account).pull(wait: 15)
+                    reloadLocal()
+                    // A server without live pull answers at once with nothing; don't spin on it.
+                    if Inbox.shared.watermark == before, Date.now.timeIntervalSince(start) < 1 { try? await Task.sleep(for: .seconds(15)) }
+                } catch let e as APIError where e.code == "unauthorized" {
+                    break // a refresh notices the revocation and wipes
+                } catch {
+                    if Task.isCancelled { break }
+                    try? await Task.sleep(for: .seconds(5))
+                }
+            }
+            // Only if a newer loop hasn't taken over since this one was stopped.
+            if liveId == id { live = nil }
+        }
+    }
+
+    func stopLive() {
+        live?.cancel()
+        live = nil
     }
 
     private func wipeAfterRevocation() {
@@ -139,19 +182,93 @@ final class AppModel {
         }
     }
 
-    func revoke(_ device: DeviceRecord) async {
+    /// Removes `devices` in order: one, or a node and the nodes it added.
+    func revoke(_ devices: [DeviceRecord]) async {
         guard let account else { return }
-        if device.id == account.deviceId { return await leave() }
+        if devices.contains(where: { $0.id == account.deviceId }) { return await leave() }
+        let sync = Sync(account: account)
         await run {
-            try await account.api.revoke(device.id)
+            for device in devices {
+                // Stop trusting a node's key here first, whatever the server does next (§3.7).
+                sync.forgetNode(device)
+                try await account.api.revoke(device.id)
+            }
             await self.refresh()
         }
     }
 
-    func makePairingCode() async throws -> PairingLink {
+    func canSend(via deviceId: String) -> Bool {
+        guard let account else { return false }
+        return Sync(account: account).canSend(via: devices.first { $0.id == deviceId })
+    }
+
+    /// §6.6: sends a reply through the node `last` came from.
+    func sendSms(_ body: String, to number: String, thread: String, replyingTo last: Message) async {
+        guard let account, let node = devices.first(where: { $0.id == last.sourceDeviceId }) else { return }
+        do {
+            try await Sync(account: account).sendSms(body, to: number, via: node, thread: thread, replyingTo: last)
+        } catch {
+            self.error = Self.describe(error)
+        }
+        reloadLocal()
+    }
+
+    /// Where a new text can go out from: each phone that sends for this one, once per active SIM.
+    var sendOptions: [SendOption] {
+        guard let account else { return [] }
+        let sync = Sync(account: account)
+        return devices.filter { sync.canSend(via: $0) }.flatMap { node in
+            let sims = statuses[node.id]?.sims?.filter(\.active) ?? []
+            return sims.isEmpty ? [SendOption(node: node, sim: nil)] : sims.map { SendOption(node: node, sim: $0) }
+        }
+    }
+
+    /// §6.6: a new text to `number`, added to its conversation through that phone. Returns the conversation.
+    func sendSms(_ body: String, to number: String, from option: SendOption) async -> String? {
+        guard let account else { return nil }
+        let thread = Receiver.smsThread(number, source: option.node.id)
+        // Keeps the contact name if this number already has a conversation.
+        let title = (try? Inbox.shared.messages(thread: thread))?.last?.title ?? number
+        do {
+            let sim = option.sim.map { Sim(slot: $0.slot, subscriptionId: $0.subscriptionId, carrier: $0.carrier) }
+            try await Sync(account: account).sendSms(body, to: number, via: option.node, thread: thread, title: title, sim: sim)
+        } catch {
+            self.error = Self.describe(error)
+        }
+        reloadLocal()
+        return thread
+    }
+
+    /// Nodes that `device` paired or introduced (§5.4).
+    func added(by device: DeviceRecord) -> [DeviceRecord] {
+        devices.filter { $0.profile?.addedBy == device.id && $0.id != account?.deviceId }
+    }
+
+    /// §5.3: a code for another phone that reads messages. It carries the UMK.
+    func makeReaderCode() async throws -> PairingLink {
         guard let account else { throw CancellationError() }
-        let code = try await account.api.requestPairing(roles: ["source", "receiver"])
+        let code = try await account.api.requestPairing(roles: ["receiver"])
         return PairingLink(server: account.server, userId: account.userId, code: code.code, umk: account.currentUmk)
+    }
+
+    /// §5.6 flow B: a code that adds the Android phone that scans it as a node, with its own key.
+    func makeNodeCode() async throws -> IntroLink {
+        guard let account else { throw CancellationError() }
+        let code = try await account.api.requestPairing(roles: ["source"])
+        let acctPk = FerryCrypto.accountKeyPair(account.currentUmk).publicKey
+        return IntroLink(server: account.server, userId: account.userId, code: code.code, acctPk: acctPk, secret: FerryCrypto.randomBytes(FerryCrypto.keyBytes))
+    }
+
+    /// Whether the node that scanned `link` has answered. Trusts it once its MAC checks out, which
+    /// proves the key came from the phone that scanned the code, not from the server.
+    func checkNodeReply(_ link: IntroLink) async throws -> Bool {
+        guard let account, let msg = try await account.api.pairingReply(code: link.code) else { return false }
+        guard let nodePk = Data(base64URL: msg.publicKey), let mac = Data(base64URL: msg.mac),
+              FerryCrypto.verifyPairingMac(secret: link.secret, userId: account.userId, deviceId: msg.deviceId, publicKey: nodePk, mac: mac)
+        else { throw UserFacingError("The new phone's answer didn't check out. Make a new code and scan it again.") }
+        try await Sync(account: account).trustNode(msg.deviceId, nodePk: nodePk)
+        await refresh()
+        return true
     }
 
     func deviceIds() async -> Set<String>? {
@@ -220,6 +337,21 @@ final class AppModel {
     }
 }
 
+/// An error whose message is already written for people.
+struct UserFacingError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
 enum AppTab: Hashable {
     case inbox, devices, settings
+}
+
+/// A phone and SIM a new text can be sent from.
+struct SendOption: Identifiable, Hashable {
+    let node: DeviceRecord
+    let sim: SimStatus?
+
+    var id: String { "\(node.id):\(sim?.slot ?? -1)" }
+    var label: String { sim.map { "\(node.simLabel($0.slot)) · \(node.displayName)" } ?? node.displayName }
 }

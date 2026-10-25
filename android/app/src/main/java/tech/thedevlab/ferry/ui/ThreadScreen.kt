@@ -6,6 +6,7 @@ import android.content.Intent
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMissed
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -39,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,10 +62,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.automirrored.filled.CallMade
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -163,6 +169,7 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
     var confirmDelete by remember { mutableStateOf(false) }
 
     val focus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     LaunchedEffect(searching) { if (searching && target.query.isBlank()) focus.requestFocus() }
 
     Column(modifier) {
@@ -175,7 +182,7 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
                     IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, "More") }
                     DropdownMenu(menu, { menu = false }) {
                         val number = messages.lastOrNull { it.number != null }?.number
-                        if (number != null) {
+                        if (number != null && TextTools.acceptsReplies(number)) {
                             DropdownMenuItem({ Text("Copy number") }, {
                                 menu = false
                                 copy(context, number)
@@ -208,7 +215,8 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
         LazyColumn(
-            Modifier.weight(1f).fillMaxWidth().alpha(if (positioned) 1f else 0f),
+            // Tapping the messages closes the keyboard, as on iOS.
+            Modifier.weight(1f).fillMaxWidth().alpha(if (positioned) 1f else 0f).pointerInput(Unit) { detectTapGestures { focusManager.clearFocus() } },
             state = listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -222,6 +230,24 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
                         query = if (searching) query else "",
                         current = searching && hits.getOrNull(current) == entry.m.rowKey,
                         origin = vm.origin(entry.m.sourceDeviceId, entry.m.simSlot),
+                    )
+                }
+            }
+        }
+        // Replies go out through the node the conversation came from (§6.6).
+        if (!searching && vm.canReply(last)) {
+            val number = messages.lastOrNull { it.number != null && !it.outgoing }?.number ?: last?.number
+            when {
+                number == null -> {}
+                TextTools.acceptsReplies(number) -> ReplyBar { vm.sendSms(target.key, last!!.sourceDeviceId, number, it) }
+                else -> {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Text(
+                        "This sender doesn't accept replies.",
+                        Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -341,6 +367,7 @@ private fun MessageBubble(m: Message, query: String, current: Boolean, origin: S
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.outgoing) Icon(Icons.AutoMirrored.Filled.CallMade, "Sent", Modifier.size(12.dp), tint = colors.onSurfaceVariant)
+                m.status?.let { StatusLabel(it) }
                 Text(
                     DateFormat.getTimeFormat(context).format(Date(m.occurredAt)) + " · " + origin,
                     Modifier.weight(1f, fill = false),
@@ -365,6 +392,51 @@ private fun MessageBubble(m: Message, query: String, current: Boolean, origin: S
             }
         }
     }
+}
+
+/** A message box that sends through the node; [onSend] gets the trimmed text. */
+@Composable
+private fun ReplyBar(onSend: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            text, { text = it },
+            Modifier.weight(1f),
+            placeholder = { Text("Text message") },
+            maxLines = 5,
+            shape = RoundedCornerShape(24.dp),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
+        )
+        IconButton(
+            {
+                onSend(text.trim())
+                text = ""
+            },
+            enabled = text.isNotBlank(),
+        ) { Icon(Icons.AutoMirrored.Filled.Send, "Send", tint = if (text.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+/** Where a text sent through a node is (§4.8). */
+@Composable
+private fun StatusLabel(status: String) {
+    val failed = status.startsWith("failed")
+    val text = when (status) {
+        "sending" -> "Sending…"
+        "sent" -> "Sent"
+        "delivered" -> "Delivered"
+        else -> "Not sent: " + when (status.substringAfter(':')) {
+            "expired" -> "took too long"
+            "rate_limited" -> "too many texts"
+            "unknown_number" -> "turn on Allow new numbers on that phone"
+            "no_permission" -> "no permission on that phone"
+            "no_sim" -> "that SIM isn't in"
+            "not_queued" -> "couldn't reach the server"
+            else -> "the network refused it"
+        }
+    }
+    Text(text, style = MaterialTheme.typography.labelSmall, color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** A 4–8 digit code in an incoming text, Arabic-Indic digits included, offered as a one-tap copy. */

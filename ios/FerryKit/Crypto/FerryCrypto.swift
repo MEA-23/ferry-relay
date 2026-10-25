@@ -4,24 +4,29 @@ import Security
 
 /// Ferry crypto (docs/PROTOCOL.md §3), byte-compatible with libsodium:
 /// BLAKE2b for the key id and `crypto_kdf_derive_from_key`, XChaCha20-Poly1305-IETF for AEAD,
-/// ISO/IEC 7816-4 padding into fixed buckets. Verified against docs/test-vectors/v1.json.
+/// ISO/IEC 7816-4 padding into fixed buckets, X25519 for node keys (§3.7).
+/// Verified against docs/test-vectors/v1.json and v2.json.
 public enum FerryCrypto {
     public static let umkBytes = 32
     public static let nonceBytes = 24
     public static let tagBytes = 16
     public static let maxPaddedBytes = 256 * 1024
+    public static let keyBytes = 32
+    public static let macBytes = 32
 
     private static let buckets = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
     private static let largeBlock = 65536
 
     public enum Subkey {
-        case event, profile, recovery
+        case event, profile, recovery, account, command
 
         var context: String {
             switch self {
             case .event: "FR_EVENT"
             case .profile: "FR_PROFL"
             case .recovery: "FR_RECOV"
+            case .account: "FR_ACCTK"
+            case .command: "FR_CMMND"
             }
         }
 
@@ -45,6 +50,12 @@ public enum FerryCrypto {
         case malformed
         case authenticationFailed
         case invalidPadding
+        case weakPublicKey
+    }
+
+    public struct KeyPair: Sendable {
+        public let secretKey: Data
+        public let publicKey: Data
     }
 
     // ── keys ─────────────────────────────────────────────────────────────────
@@ -57,6 +68,7 @@ public enum FerryCrypto {
     }
 
     /// libsodium `crypto_kdf_derive_from_key`: keyed BLAKE2b with the subkey id as salt and the context as personalization.
+    /// `umk` is a UMK, or a node root for the `.event` and `.command` subkeys (§3.7).
     public static func deriveSubkey(_ umk: Data, _ purpose: Subkey) -> Data {
         precondition(umk.count == umkBytes, "UMK must be \(umkBytes) bytes")
         var salt = [UInt8](repeating: 0, count: 16)
@@ -66,10 +78,72 @@ public enum FerryCrypto {
         return Data(Blake2b.hash([], key: Array(umk), outLen: 32, salt: salt, personal: personal))
     }
 
+    // ── node keys (§3.7) ─────────────────────────────────────────────────────
+
+    /// The account keypair, derived from the UMK, so every receiver holds the same one.
+    public static func accountKeyPair(_ umk: Data) -> KeyPair { nodeKeyPair(deriveSubkey(umk, .account)) }
+
+    public static func generateNodeKeyPair() -> KeyPair { nodeKeyPair(randomBytes(keyBytes)) }
+
+    public static func nodeKeyPair(_ secretKey: Data) -> KeyPair {
+        let key = try! Curve25519.KeyAgreement.PrivateKey(rawRepresentation: secretKey)
+        return KeyPair(secretKey: secretKey, publicKey: key.publicKey.rawRepresentation)
+    }
+
+    /// The secret a node shares with the receivers: X25519(nodeSk, acctPk) = X25519(acctSk, nodePk),
+    /// hashed with both public keys. Throws on a low-order public key (all-zero shared secret).
+    public static func nodeRoot(secretKey: Data, peerPublicKey: Data, acctPk: Data, nodePk: Data) throws -> Data {
+        guard [peerPublicKey, acctPk, nodePk].allSatisfy({ $0.count == keyBytes }) else { throw CryptoError.malformed }
+        let shared: Data
+        do {
+            let key = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: secretKey)
+            let secret = try key.sharedSecretFromKeyAgreement(with: .init(rawRepresentation: peerPublicKey))
+            shared = secret.withUnsafeBytes { Data($0) }
+        } catch {
+            throw CryptoError.weakPublicKey
+        }
+        guard shared.contains(where: { $0 != 0 }) else { throw CryptoError.weakPublicKey }
+        return Data(Blake2b.hash(Array("ferry-node-v2".utf8) + Array(acctPk) + Array(nodePk), key: Array(shared), outLen: 32))
+    }
+
+    /// On the node: its own secret key and the account public key from the pairing.
+    public static func nodeRootForNode(nodeSk: Data, acctPk: Data) throws -> Data {
+        try nodeRoot(secretKey: nodeSk, peerPublicKey: acctPk, acctPk: acctPk, nodePk: nodeKeyPair(nodeSk).publicKey)
+    }
+
+    /// On a receiver: the UMK and the node public key from its profile.
+    public static func nodeRootForReceiver(umk: Data, nodePk: Data) throws -> Data {
+        let account = accountKeyPair(umk)
+        return try nodeRoot(secretKey: account.secretKey, peerPublicKey: nodePk, acctPk: account.publicKey, nodePk: nodePk)
+    }
+
+    public static func nodeKeyId(_ root: Data) -> String {
+        precondition(root.count == keyBytes, "root must be \(keyBytes) bytes")
+        return Data(Blake2b.hash(Array("ferry-keyid-v2".utf8), key: Array(root), outLen: 16)).base64URL
+    }
+
+    // ── pairing MAC (§5.6) ───────────────────────────────────────────────────
+
+    /// Proves a public key came from whoever scanned (or showed) the QR code holding `secret`.
+    public static func pairingMac(secret: Data, userId: String, deviceId: String, publicKey: Data) -> Data {
+        precondition(secret.count == keyBytes, "pairing secret must be \(keyBytes) bytes")
+        return Data(Blake2b.hash(Array("ferry-pair-v2\(userId)\(deviceId)".utf8) + Array(publicKey), key: Array(secret), outLen: macBytes))
+    }
+
+    public static func verifyPairingMac(secret: Data, userId: String, deviceId: String, publicKey: Data, mac: Data) -> Bool {
+        let expected = pairingMac(secret: secret, userId: userId, deviceId: deviceId, publicKey: publicKey)
+        guard mac.count == expected.count else { return false }
+        return zip(expected, mac).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+    }
+
     // ── associated data ──────────────────────────────────────────────────────
 
     public static func eventAd(userId: String, sourceDeviceId: String, eventId: String) -> Data {
         Data("ferry:v1:event:\(userId):\(sourceDeviceId):\(eventId)".utf8)
+    }
+
+    public static func commandAd(userId: String, nodeId: String, commandId: String) -> Data {
+        Data("ferry:v2:command:\(userId):\(nodeId):\(commandId)".utf8)
     }
 
     public static func profileAd(userId: String, deviceId: String, version: Int64) -> Data {
@@ -177,6 +251,24 @@ public enum FerryCrypto {
         guard let umk = umks[sealed.keyId] else { throw CryptoError.unknownKeyId(sealed.keyId) }
         guard let nonce = Data(base64URL: sealed.nonce), let ct = Data(base64URL: sealed.ct) else { throw CryptoError.malformed }
         return try open(key: deriveSubkey(umk, .event), nonce: nonce, ct: ct, ad: eventAd(userId: userId, sourceDeviceId: sourceDeviceId, eventId: eventId))
+    }
+
+    /// A source-only node encrypts with its own root (§3.7); the AD is the same as for UMK events.
+    public static func encryptNodeEvent(root: Data, userId: String, sourceDeviceId: String, eventId: String, plaintext: Data) -> Sealed {
+        let (nonce, ct) = seal(key: deriveSubkey(root, .event), plain: plaintext, ad: eventAd(userId: userId, sourceDeviceId: sourceDeviceId, eventId: eventId))
+        return Sealed(keyId: nodeKeyId(root), nonce: nonce.base64URL, ct: ct.base64URL)
+    }
+
+    public static func decryptNodeEvent(root: Data, userId: String, sourceDeviceId: String, eventId: String, sealed: Sealed) throws -> Data {
+        guard sealed.keyId == nodeKeyId(root) else { throw CryptoError.unknownKeyId(sealed.keyId) }
+        guard let nonce = Data(base64URL: sealed.nonce), let ct = Data(base64URL: sealed.ct) else { throw CryptoError.malformed }
+        return try open(key: deriveSubkey(root, .event), nonce: nonce, ct: ct, ad: eventAd(userId: userId, sourceDeviceId: sourceDeviceId, eventId: eventId))
+    }
+
+    /// §6.6: a receiver encrypts a command to one node with that node's command key.
+    public static func encryptCommand(root: Data, userId: String, nodeId: String, commandId: String, plaintext: Data) -> Sealed {
+        let (nonce, ct) = seal(key: deriveSubkey(root, .command), plain: plaintext, ad: commandAd(userId: userId, nodeId: nodeId, commandId: commandId))
+        return Sealed(keyId: nodeKeyId(root), nonce: nonce.base64URL, ct: ct.base64URL)
     }
 
     public static func encryptProfile(umk: Data, userId: String, deviceId: String, version: Int64, plaintext: Data) -> Sealed {

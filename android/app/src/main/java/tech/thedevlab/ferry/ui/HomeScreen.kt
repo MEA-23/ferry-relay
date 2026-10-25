@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMissed
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Call
@@ -48,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -95,6 +97,8 @@ fun HomeScreen(vm: AppViewModel, storeVersion: Long, onNavigate: (Screen) -> Uni
     val setup = remember(checks, storeVersion) { setupItems(context) }
     val sims = remember(checks) { Sims.active(context) }
     val source = Role.SOURCE in store.roles
+    // A node adds other relaying phones; phones that read are added from one that already does (§5.6).
+    val node = store.currentUmk == null
 
     Column(modifier) {
         TopAppBar(
@@ -134,12 +138,17 @@ fun HomeScreen(vm: AppViewModel, storeVersion: Long, onNavigate: (Screen) -> Uni
                 item(key = "sims") { key(storeVersion) { SimsRow(vm, sims) } }
                 item(key = "actions") {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        QuickAction(Icons.Default.QrCode2, "Pair a device", "Add the phone you carry", Modifier.weight(1f)) { onNavigate(Screen.Pair) }
+                        QuickAction(
+                            Icons.Default.QrCode2, "Pair a device",
+                            if (node) "Add another phone that relays" else "Add the phone you carry",
+                            Modifier.weight(1f),
+                        ) { onNavigate(Screen.Pair) }
                         val apps = store.allowedPackages.size
                         QuickAction(Icons.Default.Apps, "Apps", if (apps == 0) "None relayed" else "$apps relayed", Modifier.weight(1f)) { onNavigate(Screen.Apps) }
                     }
                 }
                 item(key = "history") { HistoryRow(vm) { onNavigate(Screen.History) } }
+                if (node && store.nodeRoot != null) item(key = "replies") { key(storeVersion) { RepliesCard(vm) } }
             }
 
             item { SectionHeader("Recent") }
@@ -221,7 +230,12 @@ private class SetupItem(
 )
 
 private fun setupItems(context: Context): List<SetupItem> {
-    val phone = listOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_PHONE_NUMBERS)
+    // READ_PHONE_NUMBERS is new in Android 8; before that READ_PHONE_STATE covers SIM numbers.
+    val phone = listOfNotNull(
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.READ_PHONE_NUMBERS.takeIf { Build.VERSION.SDK_INT >= 26 },
+    )
     fun perm(icon: ImageVector, title: String, detail: String, permissions: List<String>, required: Boolean = true) =
         SetupItem(icon, title, detail, permissions.all(context::granted), required, permissions)
 
@@ -249,6 +263,52 @@ private fun setupItems(context: Context): List<SetupItem> {
             ),
         )
         add(perm(Icons.Default.Contacts, "Contacts", "Optional — names instead of numbers", listOf(Manifest.permission.READ_CONTACTS), required = false))
+        add(perm(Icons.AutoMirrored.Filled.Send, "Send texts", "Optional — replies you write on your other phones", listOf(Manifest.permission.SEND_SMS), required = false))
+    }
+}
+
+/**
+ * Replies receivers asked this phone to send (§6.6): the newest few with how they went, and
+ * whether numbers it never texted with are allowed.
+ */
+@Composable
+private fun RepliesCard(vm: AppViewModel) {
+    val sent by vm.recentlySent.collectAsStateWithLifecycle()
+    val store = vm.store
+    FormSection(
+        "Recently sent",
+        footer = "Your phones that read messages can send replies from this one, up to 10 a minute and 100 a day.",
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Allow new numbers", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Off: only numbers this phone has texted or relayed",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(store.allowNewNumbers, { store.allowNewNumbers = it })
+        }
+        sent.forEach { s ->
+            FormDivider()
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(s.to, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(relative(s.at), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(s.body, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val failed = s.status.startsWith("failed")
+                Text(
+                    when {
+                        failed -> "Refused: " + s.status.substringAfter(':').replace('_', ' ')
+                        else -> s.status.replaceFirstChar(Char::uppercase)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

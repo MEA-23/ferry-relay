@@ -110,11 +110,15 @@ targets:
     sources: [FerryKitTests]
     dependencies:
       - target: FerryKit
+      - target: Ferry
       - package: SQLCipher
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: tech.thedevlab.ferry.kit.tests
+        # Hosted in the app, so the inbox tests get a Keychain to keep their key in.
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Ferry.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Ferry
+        BUNDLE_LOADER: $(TEST_HOST)
 
   FerryUITests:
     type: bundle.ui-testing

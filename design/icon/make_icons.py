@@ -4,7 +4,8 @@
 
 iOS: AppIcon (Ferry teal) plus the alternates Ocean and Paper, each with dark (navy) and
 tinted variants, and small previews for the in-app icon picker.
-Android: adaptive-icon foreground + monochrome into design/icon/android/ (copy into res/).
+Android: adaptive-icon foreground + monochrome, and a legacy icon for Android 6–7 (no adaptive
+icons there), into design/icon/android/ (copy into res/).
 """
 
 import json
@@ -100,9 +101,23 @@ def write_android():
     mono.save(ANDROID_OUT / "ic_launcher_monochrome.webp", lossless=True)
 
 
+def write_android_legacy():
+    # Android 6–7 show the bitmap as is: a rounded teal square, 48dp at xxxhdpi = 192px, drawn 4x
+    # larger and scaled down for smooth corners.
+    big, inset, radius = 768, 32, 128
+    canvas = place_mark(gradient(TEAL, big - 2 * inset), (240, 255, 250), MARK_SCALE)
+    mask = Image.new("L", canvas.size, 0)
+    from PIL import ImageDraw
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, canvas.width - 1, canvas.height - 1), radius, fill=255)
+    out = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    out.paste(canvas, (inset, inset), mask)
+    out.resize((192, 192), Image.LANCZOS).save(ANDROID_OUT / "ic_launcher.webp", lossless=True)
+
+
 if __name__ == "__main__":
     for name, light in ICONS.items():
         write_iconset(name, light)
         write_preview(name, light)
     write_android()
+    write_android_legacy()
     print("icons written")

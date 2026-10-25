@@ -79,8 +79,11 @@ fun SettingsScreen(vm: AppViewModel, storeVersion: Long, modifier: Modifier = Mo
                         IconRow(Icons.Default.NotificationsOff, "Allow notifications", tint = MaterialTheme.colorScheme.primary) {
                             if (Build.VERSION.SDK_INT >= 33) {
                                 permission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
+                            } else if (Build.VERSION.SDK_INT >= 26) {
                                 context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                            } else {
+                                // No per-app notification screen before Android 8; its App info page has the switch.
+                                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:${context.packageName}".toUri()))
                             }
                         }
                     }
@@ -106,7 +109,7 @@ fun SettingsScreen(vm: AppViewModel, storeVersion: Long, modifier: Modifier = Mo
                     FormDivider()
                     LabeledRow("Account", store.userId.orEmpty().takeLast(12))
                     FormDivider()
-                    LabeledRow("Key ID", store.currentUmk?.let(FerryCrypto::keyId).orEmpty(), monospace = true)
+                    LabeledRow("Key ID", (store.currentUmk?.let(FerryCrypto::keyId) ?: store.nodeRoot?.let(FerryCrypto::nodeKeyId)).orEmpty(), monospace = true)
                 }
             }
             item {

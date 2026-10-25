@@ -35,9 +35,11 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Badge
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -140,7 +142,15 @@ fun InboxScreen(vm: AppViewModel, storeVersion: Long, onOpen: (ThreadTarget) -> 
         if (query.isNotBlank()) {
             SearchResults(vm, threads, query.trim(), onOpen)
         } else {
-            ThreadList(vm, storeVersion, threads, onOpen, onNavigate)
+            val canCompose = remember(storeVersion, threads) { vm.sendOptions().isNotEmpty() }
+            Box(Modifier.weight(1f)) {
+                ThreadList(vm, storeVersion, threads, onOpen, onNavigate)
+                if (canCompose) {
+                    FloatingActionButton({ onNavigate(Screen.NewMessage) }, Modifier.align(Alignment.BottomEnd).padding(16.dp)) {
+                        Icon(Icons.Default.Edit, "New message")
+                    }
+                }
+            }
         }
     }
 }
@@ -173,7 +183,8 @@ private fun ThreadList(
         },
         modifier = Modifier.fillMaxSize(),
     ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
+        // Room under the last row for the new message button.
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 88.dp)) {
             item(key = "setup") { ReceiverSetup(vm, storeVersion) }
             if (threads.isNotEmpty()) {
                 item(key = "filters") {

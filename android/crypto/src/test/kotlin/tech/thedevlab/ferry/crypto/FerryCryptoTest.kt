@@ -74,6 +74,21 @@ class FerryCryptoTest {
     }
 
     @Test
+    fun base64urlMatchesTheJdk() {
+        val random = java.util.Random(7)
+        for (n in 0..70) {
+            val bytes = ByteArray(n).also(random::nextBytes)
+            val expected = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+            assertEquals(expected, FerryCrypto.toB64u(bytes))
+            assertArrayEquals(bytes, FerryCrypto.fromB64u(expected))
+        }
+        assertArrayEquals(byteArrayOf(-5, -1), FerryCrypto.fromB64u("-_8="))
+        for (bad in listOf("A", "AB+C", "AB/C", "A=B", "AB==CD", "AR")) {
+            assertThrows(bad, IllegalArgumentException::class.java) { FerryCrypto.fromB64u(bad) }
+        }
+    }
+
+    @Test
     fun roundTripAndRejections() {
         val k = FerryCrypto.generateUmk()
         val umks = mapOf(FerryCrypto.keyId(k) to k)

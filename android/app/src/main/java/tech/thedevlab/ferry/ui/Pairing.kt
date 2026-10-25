@@ -57,6 +57,45 @@ class PairingLink(val server: String, val userId: String, val code: String, val 
     }
 }
 
+/**
+ * `ferry://node?v=2&s=…&u=…&d=<nodeDeviceId>&c=…&p=<nodePk>&x=<secret>` (§5.6 flow A): a node
+ * waiting for its first receiver. No key in it; [secret] proves the receiver's answer.
+ */
+class NodeLink(val server: String, val userId: String, val deviceId: String, val code: String, val nodePk: ByteArray, val secret: ByteArray) {
+    fun toUri(): String = v2Uri("node", server, userId, code, "d" to deviceId, "p" to FerryCrypto.toB64u(nodePk), "x" to FerryCrypto.toB64u(secret))
+}
+
+/**
+ * `ferry://intro?v=2&s=…&u=…&c=…&a=<acctPk>&x=<secret>` (§5.6 flow B): adds the phone that scans
+ * it as a node. Whoever scans it first joins the account, so it's only shown to your own phones.
+ */
+class IntroLink(val server: String, val userId: String, val code: String, val acctPk: ByteArray, val secret: ByteArray) {
+    fun toUri(): String = v2Uri("intro", server, userId, code, "a" to FerryCrypto.toB64u(acctPk), "x" to FerryCrypto.toB64u(secret))
+}
+
+private fun v2Uri(kind: String, server: String, userId: String, code: String, vararg extra: Pair<String, String>): String =
+    Uri.Builder().scheme("ferry").authority(kind)
+        .appendQueryParameter("v", "2")
+        .appendQueryParameter("s", server)
+        .appendQueryParameter("u", userId)
+        .appendQueryParameter("c", code)
+        .apply { extra.forEach { (k, v) -> appendQueryParameter(k, v) } }
+        .build()
+        .toString()
+
+/** Any Ferry pairing code: [PairingLink], [NodeLink] or [IntroLink]; null for anything else. */
+fun parsePairingCode(text: String): Any? = PairingLink.parse(text) ?: runCatching {
+    val uri = Uri.parse(text.trim())
+    if (uri.scheme != "ferry" || uri.getQueryParameter("v") != "2") return null
+    fun q(name: String) = uri.getQueryParameter(name)!!
+    fun key(name: String) = FerryCrypto.fromB64u(q(name)).takeIf { it.size == FerryCrypto.KEY_BYTES }!!
+    when (uri.host) {
+        "node" -> NodeLink(q("s"), q("u"), q("d"), q("c"), key("p"), key("x"))
+        "intro" -> IntroLink(q("s"), q("u"), q("c"), key("a"), key("x"))
+        else -> null
+    }
+}.getOrNull()
+
 fun qrBitmap(text: String, size: Int = 720): ImageBitmap {
     val hints = mapOf(EncodeHintType.MARGIN to 1, EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M)
     val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size, hints)

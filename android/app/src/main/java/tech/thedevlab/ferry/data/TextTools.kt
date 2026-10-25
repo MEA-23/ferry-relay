@@ -29,6 +29,12 @@ object TextTools {
         return out
     }
 
+    /**
+     * False for senders that are names ("VODAFONE", "Amazon"), which can't receive texts. Short
+     * codes stay repliable: many take answers like STOP.
+     */
+    fun acceptsReplies(sender: String): Boolean = sender.none { it.isLetter() }
+
     /** True when the first strongly directional character is right-to-left (Arabic, Hebrew, …). */
     fun isRtl(text: String): Boolean {
         var i = 0

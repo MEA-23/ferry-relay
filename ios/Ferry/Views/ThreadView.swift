@@ -38,6 +38,7 @@ struct ThreadView: View {
     /// the navigation bar where pulling the conversation down would reveal it.
     @State private var searching: Bool
     @FocusState private var searchFocused: Bool
+    @FocusState private var replyFocused: Bool
     @State private var hits: [String] = []
     @State private var current = -1
     /// Hidden until scrolled to where it opens, so it never flashes the oldest messages first.
@@ -51,59 +52,72 @@ struct ThreadView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(entries) { entry in
-                        switch entry {
-                        case .day(let date):
-                            DayHeader(date: date)
-                        case .newDivider:
-                            NewDivider()
-                        case .message(let m):
-                            MessageBubble(message: m, source: source(of: m), query: query, isCurrent: hits.indices.contains(current) && hits[current] == m.id)
-                                // Texts sent from the source phone sit on the right, like any messaging app.
-                                .padding(m.isOutgoing ? .leading : .trailing, 40)
+            GeometryReader { geo in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .day(let date):
+                                DayHeader(date: date)
+                            case .newDivider:
+                                NewDivider()
+                            case .message(let m):
+                                MessageBubble(message: m, source: source(of: m), query: query, isCurrent: hits.indices.contains(current) && hits[current] == m.id)
+                                    // Texts sent from the source phone sit on the right, like any messaging app.
+                                    .padding(m.isOutgoing ? .leading : .trailing, 40)
+                            }
+                        }
+                    }
+                    .padding()
+                    // At least as tall as what's visible, messages at the bottom: a short conversation then
+                    // rises with the keyboard in the same motion, with nothing to scroll.
+                    .frame(minHeight: geo.size.height, alignment: .bottom)
+                }
+                .defaultScrollAnchor(.bottom)
+                // Stays at the newest message when the keyboard shrinks the view.
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                // The reply box is multi-line, so Return can't close the keyboard: dragging or tapping the messages does.
+                .scrollDismissesKeyboard(.interactively)
+                .onTapGesture {
+                    replyFocused = false
+                    searchFocused = false
+                }
+                .opacity(positioned ? 1 : 0)
+                .onAppear {
+                    guard !positioned else { return }
+                    messages = (try? Inbox.shared.messages(thread: route.threadKey)) ?? []
+                    firstUnread = messages.first(where: \.unread)?.id
+                    hits = Self.hits(in: messages, for: query)
+                    // One layout pass later, so the lazy stack has the rows to scroll to.
+                    DispatchQueue.main.async {
+                        if let focus = route.focus {
+                            proxy.scrollTo(focus, anchor: .center)
+                            current = hits.firstIndex(of: focus) ?? -1
+                        } else if firstUnread != nil, !route.latest {
+                            proxy.scrollTo("new", anchor: .top)
+                        } else if let last = messages.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                        guard route.latest, let last = messages.last else {
+                            positioned = true
+                            markReadIfNeeded()
+                            return
+                        }
+                        // From a notification the app is still coming to the foreground, and that
+                        // first scroll gets dropped. Scroll again once it has settled.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                            positioned = true
+                            markReadIfNeeded()
                         }
                     }
                 }
-                .padding()
-            }
-            .defaultScrollAnchor(.bottom)
-            .opacity(positioned ? 1 : 0)
-            .onAppear {
-                guard !positioned else { return }
-                messages = (try? Inbox.shared.messages(thread: route.threadKey)) ?? []
-                firstUnread = messages.first(where: \.unread)?.id
-                hits = Self.hits(in: messages, for: query)
-                // One layout pass later, so the lazy stack has the rows to scroll to.
-                DispatchQueue.main.async {
-                    if let focus = route.focus {
-                        proxy.scrollTo(focus, anchor: .center)
-                        current = hits.firstIndex(of: focus) ?? -1
-                    } else if firstUnread != nil, !route.latest {
-                        proxy.scrollTo("new", anchor: .top)
-                    } else if let last = messages.last {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                    }
-                    guard route.latest, let last = messages.last else {
-                        positioned = true
-                        markReadIfNeeded()
-                        return
-                    }
-                    // From a notification the app is still coming to the foreground, and that
-                    // first scroll gets dropped. Scroll again once it has settled.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
-                        positioned = true
-                        markReadIfNeeded()
-                    }
+                .onChange(of: messages.last?.id) { _, id in
+                    if positioned, query.isEmpty, let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
                 }
-            }
-            .onChange(of: messages.last?.id) { _, id in
-                if positioned, query.isEmpty, let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
-            }
-            .onChange(of: current) { _, i in
-                if positioned, hits.indices.contains(i) { withAnimation { proxy.scrollTo(hits[i], anchor: .center) } }
+                .onChange(of: current) { _, i in
+                    if positioned, hits.indices.contains(i) { withAnimation { proxy.scrollTo(hits[i], anchor: .center) } }
+                }
             }
         }
         .onChange(of: query) {
@@ -115,7 +129,26 @@ struct ThreadView: View {
             if searching { searchBar }
         }
         .safeAreaInset(edge: .bottom) {
-            if !query.trimmingCharacters(in: .whitespaces).isEmpty { matchBar }
+            if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                matchBar
+            } else if !searching, let last = lastText, let number = phoneNumber, model.canSend(via: last.sourceDeviceId) {
+                if TextTools.acceptsReplies(number) {
+                    // Replies go out through the node the conversation came from (§6.6).
+                    ReplyBar(focus: $replyFocused) { text in
+                        Task {
+                            await model.sendSms(text, to: number, thread: route.threadKey, replyingTo: last)
+                            reload()
+                        }
+                    }
+                } else {
+                    Text("This sender doesn't accept replies.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(.bar)
+                }
+            }
         }
         .navigationTitle(messages.last?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
@@ -126,7 +159,7 @@ struct ThreadView: View {
                     searchFocused = true
                 }
             }
-            if let number = phoneNumber {
+            if let number = phoneNumber, TextTools.acceptsReplies(number) {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("Copy number", systemImage: "doc.on.doc") { UIPasteboard.general.string = number }
@@ -222,12 +255,45 @@ struct ThreadView: View {
 
     private func source(of m: Message) -> DeviceRecord? { model.devices.first { $0.id == m.sourceDeviceId } }
 
+    /// The newest text, sent or received, whose SIM a reply goes out on.
+    private var lastText: Message? {
+        messages.last { if case .sms = $0.event { true } else { false } }
+    }
+
     private var phoneNumber: String? {
         switch messages.last?.event {
         case .sms(let e): e.from
         case .call(let e): e.from
         default: nil
         }
+    }
+}
+
+/// A message box that sends through the node; `onSend` gets the trimmed text.
+private struct ReplyBar: View {
+    var focus: FocusState<Bool>.Binding
+    let onSend: (String) -> Void
+    @State private var text = ""
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            TextField("Text message", text: $text, axis: .vertical)
+                .lineLimit(1...5)
+                .focused(focus)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Button("Send", systemImage: "arrow.up.circle.fill") {
+                onSend(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                text = ""
+            }
+            .labelStyle(.iconOnly)
+            .font(.title)
+            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 }
 
@@ -289,6 +355,10 @@ private struct MessageBubble: View {
             }
             HStack(spacing: 6) {
                 if message.isOutgoing { Image(systemName: "arrow.up.right").accessibilityLabel("Sent") }
+                if let status = message.status {
+                    Text(Self.statusText(status)).foregroundStyle(status.hasPrefix("failed") ? .red : .secondary)
+                    Text("·")
+                }
                 Text(message.date.formatted(date: .omitted, time: .shortened))
                 Text("·")
                 Text(origin)
@@ -312,6 +382,26 @@ private struct MessageBubble: View {
         }
         .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
         .id(message.id)
+    }
+
+    /// Where a text sent through a node is (§4.8).
+    static func statusText(_ status: String) -> String {
+        switch status {
+        case "sending": return "Sending…"
+        case "sent": return "Sent"
+        case "delivered": return "Delivered"
+        default:
+            let reason = switch status.split(separator: ":").last.map(String.init) {
+            case "expired": "took too long"
+            case "rate_limited": "too many texts"
+            case "unknown_number": "turn on Allow new numbers on that phone"
+            case "no_permission": "no permission on that phone"
+            case "no_sim": "that SIM isn't in"
+            case "not_queued": "couldn't reach the server"
+            default: "the network refused it"
+            }
+            return "Not sent: \(reason)"
+        }
     }
 
     private var bodyText: some View {

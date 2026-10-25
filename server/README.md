@@ -34,4 +34,4 @@ Put it behind TLS (the protocol requires HTTPS) at `https://ferry.thedevlab.clou
 
 ## Not implemented yet
 
-WebSocket stream (§6.5), rate limits (§8), push gateway (§7.4).
+Rate limits (§8), push gateway (§7.4).

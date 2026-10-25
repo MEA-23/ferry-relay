@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- Replies written on a receiver, sent by this phone (PROTOCOL.md §6.6). -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
@@ -51,9 +53,16 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="ferry" android:host="pair" />
+                <data android:scheme="ferry" />
+                <data android:host="pair" />
+                <data android:host="node" />
+                <data android:host="intro" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".capture.SmsStatusReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".capture.SmsReceiver"

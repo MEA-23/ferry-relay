@@ -46,6 +46,12 @@ public enum TextTools {
         return out
     }
 
+    /// False for senders that are names ("VODAFONE", "Amazon"), which can't receive texts. Short
+    /// codes stay repliable: many take answers like STOP.
+    public static func acceptsReplies(_ sender: String) -> Bool {
+        !sender.contains { $0.isLetter }
+    }
+
     /// True when the first strongly directional character is right-to-left (Arabic, Hebrew, …).
     public static func isRTL(_ text: String) -> Bool {
         for s in text.unicodeScalars {

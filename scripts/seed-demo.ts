@@ -1,17 +1,26 @@
 // Fills a Ferry account with demo messages, for screenshots and App Store review.
-// It joins the account as an extra source device (docs/PROTOCOL.md §5.3) and uploads
+// It joins the account as an extra node (docs/PROTOCOL.md §5.6 flow B) and uploads
 // encrypted events (§6.2), exactly like the Android app does.
 //
-//   node scripts/seed-demo.ts pair 'ferry://pair?...'   # once; needs a code made for the *relay* role
+//   node scripts/seed-demo.ts pair 'ferry://intro?...'  # once; a receiver's "add a relaying phone" code
 //   node scripts/seed-demo.ts seed                      # uploads the demo set, timed relative to now
 //   node scripts/seed-demo.ts send 'See you soon'       # one new text from Omar
 //
-// The device token and the account key are kept in ~/.config/ferry/demo-device.json, outside the repo.
+// The device token and the node's root are kept in ~/.config/ferry/demo-device.json, outside the repo.
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { encryptEvent, encryptProfile, fromB64u, keyId, ready } from '../packages/crypto-ts/src/index.ts';
+import {
+  encryptNodeEvent,
+  fromB64u,
+  generateNodeKeyPair,
+  nodeKeyId,
+  nodeRootForNode,
+  pairingMac,
+  ready,
+  toB64u,
+} from '../packages/crypto-ts/src/index.ts';
 
 const STATE = join(homedir(), '.config', 'ferry', 'demo-device.json');
 const DEVICE_NAME = 'Galaxy S24';
@@ -22,8 +31,7 @@ interface State {
   userId: string;
   deviceId: string;
   token: string;
-  umk: string;
-  profileVersion: number;
+  root: string;
 }
 
 function uuidv7(now = Date.now()): string {
@@ -52,25 +60,27 @@ async function api(s: Pick<State, 'server'> & Partial<State>, method: string, pa
 
 async function pair(link: string) {
   const url = new URL(link);
+  if (url.protocol !== 'ferry:' || url.host !== 'intro') throw new Error('Expected a ferry://intro link from a receiver');
   const server = url.searchParams.get('s')!.replace(/\/$/, '');
   const userId = url.searchParams.get('u')!;
-  const umk = url.searchParams.get('k')!;
-  const reg = await api({ server }, 'POST', '/v1/devices', {
-    userId, code: url.searchParams.get('c'), roles: ['source'], platform: 'android', appVersion: '0.1.0',
+  const code = url.searchParams.get('c')!;
+  const acctPk = fromB64u(url.searchParams.get('a')!);
+  const secret = fromB64u(url.searchParams.get('x')!);
+  const reg = await api({ server }, 'POST', '/v1/devices', { userId, code, roles: ['source'], platform: 'android', appVersion: '0.1.0' });
+  const keys = generateNodeKeyPair();
+  const root = nodeRootForNode(keys.secretKey, acctPk);
+  const state: State = { server, userId, deviceId: reg.deviceId, token: reg.token, root: toB64u(root) };
+  await api(state, 'PUT', `/v1/devices/${state.deviceId}/key`, { keyId: nodeKeyId(root) });
+  await api(state, 'POST', `/v1/pairing/${code}/reply`, {
+    deviceId: state.deviceId,
+    publicKey: toB64u(keys.publicKey),
+    mac: toB64u(pairingMac(secret, userId, state.deviceId, keys.publicKey)),
   });
-  if (reg.keyId !== keyId(fromB64u(umk))) throw new Error('keyId mismatch: the link is for a different account key');
-  const state: State = { server, userId, deviceId: reg.deviceId, token: reg.token, umk, profileVersion: 0 };
-  await putProfile(state);
   mkdirSync(dirname(STATE), { recursive: true });
   writeFileSync(STATE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  // Nodes can't seal their own profile; receivers write it from this event (§4.6).
+  await upload([{ t: 'profile', occurredAt: Date.now(), name: DEVICE_NAME, sims: SIMS }]);
   console.log(`Paired as ${DEVICE_NAME} (${state.deviceId}). State saved to ${STATE}`);
-}
-
-async function putProfile(s: State) {
-  s.profileVersion += 1;
-  const sealed = encryptProfile(fromB64u(s.umk), { userId: s.userId, deviceId: s.deviceId, version: s.profileVersion },
-    { name: DEVICE_NAME, sims: SIMS });
-  await api(s, 'PUT', `/v1/devices/${s.deviceId}/profile`, { version: s.profileVersion, ...sealed });
 }
 
 const MIN = 60_000;
@@ -119,13 +129,13 @@ async function send(body: string) {
 
 async function upload(payloads: ReturnType<typeof demoEvents> | object[]) {
   const s: State = JSON.parse(readFileSync(STATE, 'utf8'));
-  const umk = fromB64u(s.umk);
+  const root = fromB64u(s.root);
   const now = Date.now();
   const events = payloads.map((payload, i) => {
     const id = uuidv7(now + i);
     const p = payload as { t: string; direction?: string };
-    const silent = p.t === 'status' || p.direction === 'out';
-    return { id, kind: silent ? 'silent' : 'alert', ...encryptEvent(umk, { userId: s.userId, sourceDeviceId: s.deviceId, eventId: id }, payload) };
+    const silent = p.t === 'status' || p.t === 'profile' || p.direction === 'out';
+    return { id, kind: silent ? 'silent' : 'alert', ...encryptNodeEvent(root, { userId: s.userId, sourceDeviceId: s.deviceId, eventId: id }, payload) };
   });
   const res = await api(s, 'POST', '/v1/events', { events });
   console.log(`Uploaded ${res.accepted.length} events (${res.duplicate.length} duplicates).`);
@@ -137,6 +147,6 @@ if (cmd === 'pair' && arg) await pair(arg);
 else if (cmd === 'seed') await seed();
 else if (cmd === 'send' && arg) await send(arg);
 else {
-  console.error("usage: node scripts/seed-demo.ts pair 'ferry://pair?...' | seed | send 'text from Omar'");
+  console.error("usage: node scripts/seed-demo.ts pair 'ferry://intro?...' | seed | send 'text from Omar'");
   process.exit(1);
 }

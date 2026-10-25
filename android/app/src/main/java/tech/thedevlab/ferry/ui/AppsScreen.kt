@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import tech.thedevlab.ferry.service.HeartbeatWorker
 import tech.thedevlab.ferry.service.RelayService
 
 private class AppEntry(val packageName: String, val label: String, val icon: ImageBitmap?)
@@ -123,6 +124,7 @@ fun AppsScreen(vm: AppViewModel, onBack: () -> Unit, modifier: Modifier = Modifi
                         allowed = if (on) allowed + app.packageName else allowed - app.packageName
                         vm.store.allowedPackages = allowed
                         RelayService.start(context)
+                        HeartbeatWorker.reportIfChanged(context)
                     })
                 }
             }

@@ -208,3 +208,93 @@ public struct PairingLink: Sendable {
         return PairingLink(server: s, userId: u, code: code, umk: umk)
     }
 }
+
+/// `ferry://node?v=2&s=…&u=…&d=<nodeDeviceId>&c=…&p=<nodePk>&x=<secret>` (§5.6 flow A): a node waiting
+/// for its first receiver. It holds no key; `secret` proves the receiver's answer.
+public struct NodeLink: Sendable {
+    public let server: String
+    public let userId: String
+    public let deviceId: String
+    public let code: String
+    public let nodePk: Data
+    public let secret: Data
+}
+
+/// `ferry://intro?v=2&s=…&u=…&c=…&a=<acctPk>&x=<secret>` (§5.6 flow B): adds the Android phone that
+/// scans it as a node. Whoever scans it first joins the account, so only show it to your own phones.
+public struct IntroLink: Sendable {
+    public let server: String
+    public let userId: String
+    public let code: String
+    public let acctPk: Data
+    public let secret: Data
+
+    public init(server: String, userId: String, code: String, acctPk: Data, secret: Data) {
+        self.server = server
+        self.userId = userId
+        self.code = code
+        self.acctPk = acctPk
+        self.secret = secret
+    }
+
+    public var uri: String {
+        v2URI("intro", server: server, userId: userId, code: code, extra: [("a", acctPk.base64URL), ("x", secret.base64URL)])
+    }
+}
+
+/// Any Ferry pairing code this iPhone might scan, paste or open.
+public enum ScannedCode: Sendable {
+    /// §5.3: another receiver's code, with the UMK.
+    case receiver(PairingLink)
+    /// §5.6 flow A: a new node waiting for its first receiver.
+    case node(NodeLink)
+    /// §5.6 flow B: for Android phones that relay, not for this iPhone.
+    case intro(IntroLink)
+
+    public var server: String {
+        switch self {
+        case .receiver(let l): l.server
+        case .node(let l): l.server
+        case .intro(let l): l.server
+        }
+    }
+
+    public var code: String {
+        switch self {
+        case .receiver(let l): l.code
+        case .node(let l): l.code
+        case .intro(let l): l.code
+        }
+    }
+
+    public static func parse(_ text: String) -> ScannedCode? {
+        if let link = PairingLink.parse(text) { return .receiver(link) }
+        guard let c = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)), c.scheme == "ferry" else { return nil }
+        func q(_ name: String) -> String? { c.queryItems?.first { $0.name == name }?.value }
+        func key(_ name: String) -> Data? { q(name).flatMap { Data(base64URL: $0) }.flatMap { $0.count == FerryCrypto.keyBytes ? $0 : nil } }
+        guard q("v") == "2", let s = q("s"), let url = URL(string: s), Ferry.isAllowedServer(url), let u = q("u"), let code = q("c"), let x = key("x")
+        else { return nil }
+        switch c.host {
+        case "node":
+            guard let d = q("d"), let p = key("p") else { return nil }
+            return .node(NodeLink(server: s, userId: u, deviceId: d, code: code, nodePk: p, secret: x))
+        case "intro":
+            guard let a = key("a") else { return nil }
+            return .intro(IntroLink(server: s, userId: u, code: code, acctPk: a, secret: x))
+        default:
+            return nil
+        }
+    }
+}
+
+private func v2URI(_ kind: String, server: String, userId: String, code: String, extra: [(String, String)]) -> String {
+    var c = URLComponents()
+    c.scheme = "ferry"
+    c.host = kind
+    let items = [("v", "2"), ("s", server), ("u", userId), ("c", code)] + extra
+    // Encoded by hand, as in PairingLink: URLComponents leaves ':' and '/' alone in queries.
+    c.percentEncodedQueryItems = items.map {
+        .init(name: $0.0, value: $0.1.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(.init(charactersIn: "-._~"))))
+    }
+    return c.string!
+}

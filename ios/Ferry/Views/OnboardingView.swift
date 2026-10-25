@@ -70,7 +70,7 @@ private struct JoinView: View {
     @FocusState private var linkFocused: Bool
 
     var body: some View {
-        FormPage(title: "Pair this iPhone", subtitle: "On your Android phone, open Ferry → Devices → Pair a device. It shows a code to scan.") {
+        FormPage(title: "Pair this iPhone", subtitle: "Set up Ferry on your Android phone: “It has the SIM cards”, then “Yes, start fresh”. It shows a code to scan. Already have an iPhone with Ferry? Use its Devices → Pair a device.") {
             if let error = model.error {
                 ErrorCard(message: error) { model.error = nil }
             }
@@ -96,7 +96,7 @@ private struct JoinView: View {
 
             DisclosureGroup("Type or edit the link", isExpanded: $manual) {
                 VStack(spacing: 14) {
-                    FerryField("Pairing link", icon: "link", text: $link, prompt: "ferry://pair?…", error: linkError, axis: .vertical, monospaced: true, focus: $linkFocused)
+                    FerryField("Pairing link", icon: "link", text: $link, prompt: "ferry://…", error: linkError, axis: .vertical, monospaced: true, focus: $linkFocused)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -118,10 +118,10 @@ private struct JoinView: View {
 
     private func submit(_ text: String) {
         model.error = nil
-        guard let parsed = PairingLink.parse(text) else {
+        guard let parsed = ScannedCode.parse(text) else {
             link = text
             manual = true
-            linkError = "That isn't a Ferry pairing link. It starts with ferry://pair"
+            linkError = "That isn't a Ferry pairing link. It starts with ferry://"
             return
         }
         linkFocused = false

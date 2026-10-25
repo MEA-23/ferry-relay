@@ -1,0 +1,90 @@
+{
+  "version": 2,
+  "description": "Ferry v2 test vectors: per-node keys and pairing MACs (docs/PROTOCOL.md §3.7, §5.6). Binary values are base64url without padding unless suffixed _hex.",
+  "umk_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "account": {
+    "secretKey_hex": "a0efaa73254805659be839d6e2ea32ec9b16d7302a67e7d3ba64eb1dc27a9948",
+    "publicKey": "WgcdjeSHIdZ_GOU5_4P5uRZxDFuHSs5ZipLRytj_FVI"
+  },
+  "node": {
+    "deviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+    "secretKey_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    "publicKey": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ",
+    "shared_hex": "af25c4fe707ee22158fc6f50480607b24bfa118bf959aa2d6c3858481c657336",
+    "root_hex": "f63ed8d5be69d8cde3cb0087bc21e408d5396db5343781d3a412f5378eb1221a",
+    "keyId": "NmRMiUzbd7iaaFdITuHW8g",
+    "subkeys_hex": {
+      "event": "1cffa7973066260f0783692801f99cf80098c5781892e4ea61d1ac2e2e6793f4",
+      "command": "10d90dbeed9dd799ab1fec9d5b7229bd502b2c91cf3c1ed20d16c67e1bb0078c"
+    }
+  },
+  "lowOrderPublicKeys": [
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  ],
+  "events": [
+    {
+      "name": "node-sms",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000f001",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000b1:0192c2a0-0000-7000-8000-00000000f001",
+      "plaintext": "{\"t\":\"sms\",\"occurredAt\":1761292800000,\"sim\":{\"slot\":0,\"subscriptionId\":3,\"carrier\":\"Vodafone\",\"number\":null},\"from\":\"+4915112345678\",\"body\":\"Your code is 123456\"}",
+      "paddedLength": 256,
+      "nonce": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3",
+      "ct": "MA9-nmjMDOpZWCuSDaQTi22c-TfEb2A0H_k6brc4OuO9UVoVDcIFNbc66RNjxyvKeRxrhlar2Zwgd3a6c-cWZw-2XhfX3g6tHhWPGGLi07eVklH_K2W1Z6N_g9aBX_m4dxjSf5Qr00P104THKLSbI9RyEY1CsApEytVwHg65JVKsCJ78IJWeCCtQo6G-Skl5TW6EDqHbHVFYJ5hynSVfVypRb1u_fpHIK7G-FpIBwb6pAGkNrut3RnbzmpIS4StKEfoKTH-J2sX4KIwGUl2SEK0sAFmQW-f41xGqZSBHGu7kxHFYD9vgglw_9gvYhp1XKWTMt8Xi7ZMgod2gHtZ7jFt6qI111L4TO_ZbDRYEhoo"
+    },
+    {
+      "name": "node-profile",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000f002",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000b1:0192c2a0-0000-7000-8000-00000000f002",
+      "plaintext": "{\"t\":\"profile\",\"occurredAt\":1761292801000,\"name\":\"Old phone\",\"sims\":{\"0\":\"Work SIM\"}}",
+      "paddedLength": 256,
+      "nonce": "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4",
+      "ct": "rOFs_op2JV8Eh0jIBncNrHnlgRwUHJDFX-D4eFc1240_fU_ZaJJiENfQR0msyBgEeKfeWpu3HTrN-VAu7G0WhNjpqKcboNE9_yb0TLuzaUIeiIvPCdZaCvBU0UAsuKJZCfdqaErHUci2ZLLWgKOy5-2sU890Q8XiUd19JJOZtzALZMSw2UhXtOhB-Ja_ERmcF1xfJ04zMyKfSHLzt2tCrXBbQ1CfARBnUByMmiBdGYwicAOnp2jVG-A3gnpQj86cRPTB1Qb_IMkMY21_-COL93dONN_FCxbzBJ-eBvLlBf_T_mTQAbqIh_sKVHudxeyIW5lTiSpwT1pBm6CnUUqJcYmvrn4YjQpZI3JkT-YIjMg"
+    },
+    {
+      "name": "node-introduce",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "sourceDeviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "eventId": "0192c2a0-0000-7000-8000-00000000f003",
+      "ad": "ferry:v1:event:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000b1:0192c2a0-0000-7000-8000-00000000f003",
+      "plaintext": "{\"t\":\"introduce\",\"occurredAt\":1761292802000,\"deviceId\":\"0192c2a0-0000-7000-8000-0000000000b2\",\"nodePk\":\"NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ\"}",
+      "paddedLength": 256,
+      "nonce": "YmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5",
+      "ct": "F2xgVJcsCBnHPVgZ0DS9uNDnvepA2Dr39iTqOXr-bQ0lxKah8HZYVJzoym9EzxZnX7CdZ0CU_c4sADiRqtrqB_8z-Kdjbd1jbpidWL8YnXLK0Y6mRdt4uaZdjZE7i8B7tZZOo1pqjQUfhjSPDnPR2Dt6TKmac6F8Y_roWzVNJVgxSQZRmbqTqhHlbFlc1ie02_2XgXfUT5vPp7PKUDsciGJptVlk_vRxXoNGCs7sjuctw1KWnRnukbbycFq8kcFQOoHk5vzFYjJIHYaPKGP5FE3yl0Yw-SPJb0VKSkh4QDrnT8dCke1mZpIJjkYp-o-QG_rEYy5WdQ7xUlilZhA7Qmw1IO9e0CazZjZ6naH7iIs"
+    }
+  ],
+  "commands": [
+    {
+      "name": "send-sms",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "nodeId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "commandId": "0192c2a0-0000-7000-8000-00000000c001",
+      "ad": "ferry:v2:command:0192c2a0-0000-7000-8000-000000000001:0192c2a0-0000-7000-8000-0000000000b1:0192c2a0-0000-7000-8000-00000000c001",
+      "plaintext": "{\"t\":\"send_sms\",\"to\":\"+4915112345678\",\"body\":\"On my way 🚢\",\"subscriptionId\":3,\"createdAt\":1761292900000,\"expiresAt\":1761293200000}",
+      "nonce": "kJGSk5SVlpeYmZqbnJ2en6ChoqOkpaan",
+      "ct": "RcPT0CaaqAe5db85JCcXpXeALj_G-F_ZhZp1RqGcqygZlNrCRYhNrwDGzwyJqmJDxzxQF5yqoLz_oKjbwDZl3hlz_OEygU-NamvFMkhy7RFcLBJsiskRUZ_34BucLz4MiMcoFjFQ4jTRd6Bf_cluKXcjNe6rnbDdQnHiqpvCUocDo-ni2hiFqrdgZ_daTebjAc74IEXmhHFHCcr9KvlVTqDPmFL642DAtLXXRhA1770O998mQOV4pu4ZuBaLmaJwq-h2pWj15zhrnO74cgaluprtojILTAFOBoooYfHxOHcDHioAQ4-lv1zxcKNE6IfCbelfuTqpVpPmvWED_NJF_45wFtGD-tIJvMTf68vzU-E"
+    }
+  ],
+  "pairingMacs": [
+    {
+      "name": "account-key-to-node",
+      "publicKey": "WgcdjeSHIdZ_GOU5_4P5uRZxDFuHSs5ZipLRytj_FVI",
+      "secret_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "deviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "mac": "L4tO6lHc3jfAZZ8wAgLx5v467dH75-XQYIsAutkRSaM"
+    },
+    {
+      "name": "node-key-to-introducer",
+      "publicKey": "NYBy1jZYgNGu6jKa35EhODhR7SGijjt16WXQ0s0WYlQ",
+      "secret_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+      "userId": "0192c2a0-0000-7000-8000-000000000001",
+      "deviceId": "0192c2a0-0000-7000-8000-0000000000b1",
+      "mac": "Gxf8BmnHwwQRQshgiVuxw1yswlFphoZsiBm6BJBP8Gg"
+    }
+  ]
+}

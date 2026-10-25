@@ -40,7 +40,8 @@ android {
 
     defaultConfig {
         applicationId = "tech.thedevlab.ferry"
-        minSdk = 26
+        // Android 6, so an old spare phone can relay (it only needs to be a node).
+        minSdk = 23
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
@@ -58,6 +59,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time below Android 8.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     lint {
@@ -125,6 +128,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.okhttp.tls)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(libs.zxing.core)
 
     testImplementation(libs.junit)

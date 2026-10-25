@@ -11,11 +11,19 @@ const BUCKETS = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
 const LARGE_BLOCK = 65536;
 
 const KEYID_MESSAGE = 'ferry-keyid-v1';
+const NODE_KEYID_MESSAGE = 'ferry-keyid-v2';
+const NODE_ROOT_MESSAGE = 'ferry-node-v2';
+const PAIR_MAC_MESSAGE = 'ferry-pair-v2';
 const KDF = {
   event: { context: 'FR_EVENT', id: 1 },
   profile: { context: 'FR_PROFL', id: 1 },
   recovery: { context: 'FR_RECOV', id: 1 },
+  account: { context: 'FR_ACCTK', id: 1 },
+  command: { context: 'FR_CMMND', id: 1 },
 } as const;
+
+export const KEY_BYTES = 32;
+export const MAC_BYTES = 32;
 
 export type SubkeyPurpose = keyof typeof KDF;
 
@@ -53,20 +61,101 @@ export function keyId(umk: Uint8Array): string {
   return toB64u(sodium.crypto_generichash(16, utf8.encode(KEYID_MESSAGE), umk));
 }
 
-export function deriveSubkey(umk: Uint8Array, purpose: SubkeyPurpose): Uint8Array {
-  assertUmk(umk);
+// `key` is a UMK, or a node root for the `event` and `command` subkeys (§3.7).
+export function deriveSubkey(key: Uint8Array, purpose: SubkeyPurpose): Uint8Array {
+  assertUmk(key);
   const { context, id } = KDF[purpose];
-  return sodium.crypto_kdf_derive_from_key(32, id, context, umk);
+  return sodium.crypto_kdf_derive_from_key(32, id, context, key);
 }
 
 function assertUmk(umk: Uint8Array): void {
   if (umk.length !== UMK_BYTES) throw new Error(`UMK must be ${UMK_BYTES} bytes`);
 }
 
+// ── node keys (§3.7) ────────────────────────────────────────────────────────
+
+export interface KeyPair {
+  secretKey: Uint8Array;
+  publicKey: Uint8Array;
+}
+
+/** The account keypair, derived from the UMK, so every receiver holds the same one. */
+export function accountKeyPair(umk: Uint8Array): KeyPair {
+  const secretKey = deriveSubkey(umk, 'account');
+  return { secretKey, publicKey: sodium.crypto_scalarmult_base(secretKey) };
+}
+
+export function generateNodeKeyPair(): KeyPair {
+  return nodeKeyPair(sodium.randombytes_buf(KEY_BYTES));
+}
+
+export function nodeKeyPair(secretKey: Uint8Array): KeyPair {
+  if (secretKey.length !== KEY_BYTES) throw new Error(`secret key must be ${KEY_BYTES} bytes`);
+  return { secretKey, publicKey: sodium.crypto_scalarmult_base(secretKey) };
+}
+
+/**
+ * The secret a node shares with the receivers: X25519(nodeSk, acctPk) = X25519(acctSk, nodePk),
+ * hashed with both public keys. Throws on a low-order public key (all-zero shared secret).
+ */
+export function nodeRoot(secretKey: Uint8Array, peerPublicKey: Uint8Array, acctPk: Uint8Array, nodePk: Uint8Array): Uint8Array {
+  for (const k of [peerPublicKey, acctPk, nodePk]) if (k.length !== KEY_BYTES) throw new Error(`public key must be ${KEY_BYTES} bytes`);
+  let shared: Uint8Array;
+  try {
+    shared = sodium.crypto_scalarmult(secretKey, peerPublicKey);
+  } catch {
+    throw new Error('weak public key');
+  }
+  if (shared.every((b) => b === 0)) throw new Error('weak public key');
+  return sodium.crypto_generichash(32, concat(utf8.encode(NODE_ROOT_MESSAGE), acctPk, nodePk), shared);
+}
+
+/** On the node: its own secret key and the account public key from the pairing. */
+export function nodeRootForNode(nodeSk: Uint8Array, acctPk: Uint8Array): Uint8Array {
+  return nodeRoot(nodeSk, acctPk, acctPk, nodeKeyPair(nodeSk).publicKey);
+}
+
+/** On a receiver: the UMK and the node public key from its profile. */
+export function nodeRootForReceiver(umk: Uint8Array, nodePk: Uint8Array): Uint8Array {
+  const acct = accountKeyPair(umk);
+  return nodeRoot(acct.secretKey, nodePk, acct.publicKey, nodePk);
+}
+
+export function nodeKeyId(root: Uint8Array): string {
+  assertUmk(root);
+  return toB64u(sodium.crypto_generichash(16, utf8.encode(NODE_KEYID_MESSAGE), root));
+}
+
+// ── pairing MAC (§5.6) ──────────────────────────────────────────────────────
+
+/** Proves a public key came from whoever scanned (or showed) the QR code holding `secret`. */
+export function pairingMac(secret: Uint8Array, userId: string, deviceId: string, publicKey: Uint8Array): Uint8Array {
+  if (secret.length !== KEY_BYTES) throw new Error(`pairing secret must be ${KEY_BYTES} bytes`);
+  return sodium.crypto_generichash(MAC_BYTES, concat(utf8.encode(PAIR_MAC_MESSAGE + userId + deviceId), publicKey), secret);
+}
+
+export function verifyPairingMac(secret: Uint8Array, userId: string, deviceId: string, publicKey: Uint8Array, mac: Uint8Array): boolean {
+  return mac.length === MAC_BYTES && sodium.memcmp(pairingMac(secret, userId, deviceId, publicKey), mac);
+}
+
+function concat(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
 // ── associated data ─────────────────────────────────────────────────────────
 
 export function eventAd(userId: string, sourceDeviceId: string, eventId: string): Uint8Array {
   return utf8.encode(`ferry:v1:event:${userId}:${sourceDeviceId}:${eventId}`);
+}
+
+export function commandAd(userId: string, nodeId: string, commandId: string): Uint8Array {
+  return utf8.encode(`ferry:v2:command:${userId}:${nodeId}:${commandId}`);
 }
 
 export function profileAd(userId: string, deviceId: string, version: number): Uint8Array {
@@ -129,6 +218,42 @@ export function decryptEvent(umks: Map<string, Uint8Array>, ids: EventIds, env: 
   if (!umk) throw new Error(`unknown keyId ${env.keyId}`);
   const ad = eventAd(ids.userId, ids.sourceDeviceId, ids.eventId);
   const plain = open(deriveSubkey(umk, 'event'), fromB64u(env.nonce), fromB64u(env.ct), ad);
+  return JSON.parse(utf8Decoder.decode(plain));
+}
+
+// A source-only node encrypts with its own root (§3.7); the AD is the same as above.
+export function encryptNodeEvent(root: Uint8Array, ids: EventIds, payload: unknown, nonce?: Uint8Array): Sealed {
+  const ad = eventAd(ids.userId, ids.sourceDeviceId, ids.eventId);
+  const sealed = seal(deriveSubkey(root, 'event'), utf8.encode(JSON.stringify(payload)), ad, nonce);
+  return { keyId: nodeKeyId(root), nonce: toB64u(sealed.nonce), ct: toB64u(sealed.ct) };
+}
+
+export function decryptNodeEvent(root: Uint8Array, ids: EventIds, env: Sealed): unknown {
+  if (env.keyId !== nodeKeyId(root)) throw new Error(`unknown keyId ${env.keyId}`);
+  const ad = eventAd(ids.userId, ids.sourceDeviceId, ids.eventId);
+  const plain = open(deriveSubkey(root, 'event'), fromB64u(env.nonce), fromB64u(env.ct), ad);
+  return JSON.parse(utf8Decoder.decode(plain));
+}
+
+// ── commands (§6.6) ─────────────────────────────────────────────────────────
+
+export interface CommandIds {
+  userId: string;
+  nodeId: string;
+  commandId: string;
+}
+
+// A receiver encrypts a command to one node with that node's command key.
+export function encryptCommand(root: Uint8Array, ids: CommandIds, payload: unknown, nonce?: Uint8Array): Sealed {
+  const ad = commandAd(ids.userId, ids.nodeId, ids.commandId);
+  const sealed = seal(deriveSubkey(root, 'command'), utf8.encode(JSON.stringify(payload)), ad, nonce);
+  return { keyId: nodeKeyId(root), nonce: toB64u(sealed.nonce), ct: toB64u(sealed.ct) };
+}
+
+export function decryptCommand(root: Uint8Array, ids: CommandIds, env: Sealed): unknown {
+  if (env.keyId !== nodeKeyId(root)) throw new Error(`unknown keyId ${env.keyId}`);
+  const ad = commandAd(ids.userId, ids.nodeId, ids.commandId);
+  const plain = open(deriveSubkey(root, 'command'), fromB64u(env.nonce), fromB64u(env.ct), ad);
   return JSON.parse(utf8Decoder.decode(plain));
 }
 

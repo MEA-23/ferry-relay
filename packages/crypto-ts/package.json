@@ -7,7 +7,7 @@
   "exports": "./src/index.ts",
   "scripts": {
     "test": "node --test test/*.test.ts",
-    "vectors": "node src/vectors.ts > ../../docs/test-vectors/v1.json",
+    "vectors": "node src/vectors.ts > ../../docs/test-vectors/v1.json && node src/vectors-v2.ts > ../../docs/test-vectors/v2.json",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -13,6 +13,78 @@ private func hex(_ s: String) -> Data {
 
 private let umk = hex(vectors["umk_hex"] as! String)
 
+private let v2: [String: Any] = {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../docs/test-vectors/v2.json")
+    return try! JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+}()
+
+/// Node keys and pairing MACs (§3.7, §5.6).
+struct NodeKeyVectorTests {
+    let node = v2["node"] as! [String: Any]
+    let account = v2["account"] as! [String: String]
+
+    @Test func accountKeyPair() {
+        let pair = FerryCrypto.accountKeyPair(umk)
+        #expect(pair.secretKey == hex(account["secretKey_hex"]!))
+        #expect(pair.publicKey.base64URL == account["publicKey"]!)
+    }
+
+    @Test func rootOnBothSides() throws {
+        let pair = FerryCrypto.nodeKeyPair(hex(node["secretKey_hex"] as! String))
+        #expect(pair.publicKey.base64URL == node["publicKey"] as! String)
+        let root = try FerryCrypto.nodeRootForNode(nodeSk: pair.secretKey, acctPk: Data(base64URL: account["publicKey"]!)!)
+        #expect(root == hex(node["root_hex"] as! String))
+        #expect(try FerryCrypto.nodeRootForReceiver(umk: umk, nodePk: pair.publicKey) == root)
+        #expect(FerryCrypto.nodeKeyId(root) == node["keyId"] as! String)
+        let sk = node["subkeys_hex"] as! [String: String]
+        #expect(FerryCrypto.deriveSubkey(root, .event) == hex(sk["event"]!))
+        #expect(FerryCrypto.deriveSubkey(root, .command) == hex(sk["command"]!))
+    }
+
+    @Test func events() throws {
+        let root = hex(node["root_hex"] as! String)
+        for e in v2["events"] as! [[String: Any]] {
+            let (u, d, id) = (e["userId"] as! String, e["sourceDeviceId"] as! String, e["eventId"] as! String)
+            let ad = FerryCrypto.eventAd(userId: u, sourceDeviceId: d, eventId: id)
+            let plaintext = Data((e["plaintext"] as! String).utf8)
+            let (_, ct) = FerryCrypto.seal(key: FerryCrypto.deriveSubkey(root, .event), plain: plaintext, ad: ad, nonce: Data(base64URL: e["nonce"] as! String)!)
+            #expect(ct.base64URL == e["ct"] as! String, "\(e["name"]!)")
+            let sealed = FerryCrypto.Sealed(keyId: node["keyId"] as! String, nonce: e["nonce"] as! String, ct: e["ct"] as! String)
+            #expect(try FerryCrypto.decryptNodeEvent(root: root, userId: u, sourceDeviceId: d, eventId: id, sealed: sealed) == plaintext)
+        }
+    }
+
+    @Test func commands() {
+        let root = hex(node["root_hex"] as! String)
+        for c in v2["commands"] as! [[String: String]] {
+            let ad = FerryCrypto.commandAd(userId: c["userId"]!, nodeId: c["nodeId"]!, commandId: c["commandId"]!)
+            #expect(String(decoding: ad, as: UTF8.self) == c["ad"]!)
+            let (_, ct) = FerryCrypto.seal(key: FerryCrypto.deriveSubkey(root, .command), plain: Data(c["plaintext"]!.utf8), ad: ad, nonce: Data(base64URL: c["nonce"]!)!)
+            #expect(ct.base64URL == c["ct"]!, "\(c["name"]!)")
+        }
+    }
+
+    @Test func lowOrderKeysAreRejected() {
+        let pair = FerryCrypto.generateNodeKeyPair()
+        for pk in (v2["lowOrderPublicKeys"] as! [String]).map({ Data(base64URL: $0)! }) {
+            #expect(throws: FerryCrypto.CryptoError.weakPublicKey) {
+                try FerryCrypto.nodeRoot(secretKey: pair.secretKey, peerPublicKey: pk, acctPk: pk, nodePk: pair.publicKey)
+            }
+        }
+    }
+
+    @Test func pairingMacs() {
+        for m in v2["pairingMacs"] as! [[String: String]] {
+            let secret = hex(m["secret_hex"]!)
+            let pk = Data(base64URL: m["publicKey"]!)!
+            let mac = FerryCrypto.pairingMac(secret: secret, userId: m["userId"]!, deviceId: m["deviceId"]!, publicKey: pk)
+            #expect(mac.base64URL == m["mac"]!, "\(m["name"]!)")
+            #expect(FerryCrypto.verifyPairingMac(secret: secret, userId: m["userId"]!, deviceId: m["deviceId"]!, publicKey: pk, mac: mac))
+            #expect(!FerryCrypto.verifyPairingMac(secret: secret, userId: m["userId"]!, deviceId: "other", publicKey: pk, mac: mac))
+        }
+    }
+}
+
 struct CryptoVectorTests {
     @Test func keyId() {
         #expect(FerryCrypto.keyId(umk) == vectors["keyId"] as! String)
@@ -101,6 +173,33 @@ struct PairingLinkTests {
     }
 }
 
+struct ScannedCodeTests {
+    @Test func introRoundTrip() throws {
+        let link = IntroLink(server: "https://ferry.example.com", userId: "u1", code: "c_-1", acctPk: Data(repeating: 7, count: 32), secret: Data(repeating: 9, count: 32))
+        guard case .intro(let parsed) = try #require(ScannedCode.parse(link.uri)) else { Issue.record("expected intro"); return }
+        #expect(parsed.acctPk == link.acctPk)
+        #expect(parsed.secret == link.secret)
+        #expect(parsed.server == "https://ferry.example.com")
+    }
+
+    @Test func nodeCodeFromAndroid() throws {
+        let pk = Data(repeating: 1, count: 32).base64URL, x = Data(repeating: 2, count: 32).base64URL
+        let uri = "ferry://node?v=2&s=https%3A%2F%2Fa.com&u=u1&c=c1&d=d1&p=\(pk)&x=\(x)"
+        guard case .node(let link) = try #require(ScannedCode.parse(uri)) else { Issue.record("expected node"); return }
+        #expect(link.deviceId == "d1")
+        #expect(link.nodePk == Data(repeating: 1, count: 32))
+        // Short keys, a missing device id or plain http are not codes.
+        #expect(ScannedCode.parse("ferry://node?v=2&s=https%3A%2F%2Fa.com&u=u1&c=c1&d=d1&p=AAAA&x=\(x)") == nil)
+        #expect(ScannedCode.parse("ferry://node?v=2&s=https%3A%2F%2Fa.com&u=u1&c=c1&p=\(pk)&x=\(x)") == nil)
+        #expect(ScannedCode.parse("ferry://node?v=2&s=http%3A%2F%2Fa.com&u=u1&c=c1&d=d1&p=\(pk)&x=\(x)") == nil)
+    }
+
+    @Test func receiverCodesStillParse() {
+        let link = PairingLink(server: "https://a.com", userId: "u", code: "c", umk: umk)
+        guard case .receiver = ScannedCode.parse(link.uri) else { Issue.record("expected receiver"); return }
+    }
+}
+
 struct ReceiverTests {
     let user = "0192c2a0-0000-7000-8000-000000000001"
     let source = "0192c2a0-0000-7000-8000-0000000000a1"
@@ -164,6 +263,66 @@ struct ReceiverTests {
         try Data(repeating: 0x42, count: 4096).write(to: inbox.url)
         _ = try receiver.ingest(stored(#"{"t":"sms","occurredAt":1,"sim":null,"from":"+1","body":"hi"}"#))
         #expect(try inbox.threads().count == 1)
+    }
+
+    @Test func nodeEventsNeedATrustedProfile() throws {
+        let node = FerryCrypto.generateNodeKeyPair()
+        let root = try FerryCrypto.nodeRootForReceiver(umk: umk, nodePk: node.publicKey)
+        let id = UUID().uuidString.lowercased()
+        let s = FerryCrypto.encryptNodeEvent(root: root, userId: user, sourceDeviceId: source, eventId: id, plaintext: Data(#"{"t":"sms","occurredAt":1,"sim":null,"from":"+1","body":"hi"}"#.utf8))
+        let e = StoredEvent(id: id, keyId: s.keyId, nonce: s.nonce, ct: s.ct, kind: "alert", seq: "1", sourceDeviceId: source, receivedAt: 1)
+        #expect(throws: UnknownNodeError.self) { try receiver.ingest(e) }
+
+        let profile = DeviceProfile(name: "Old phone", nodePk: node.publicKey.base64URL)
+        try inbox.saveDevices([DeviceRecord(id: source, roles: ["source"], platform: "android", appVersion: nil, createdAt: 0, lastSeenAt: 0, profileVersion: 1, profile: profile)])
+        guard case .new(_, let summary) = try receiver.ingest(e) else { Issue.record("expected new"); return }
+        #expect(summary.subtitle == "Old phone")
+    }
+
+    @Test func removedNodesStayRemoved() throws {
+        let node = FerryCrypto.generateNodeKeyPair()
+        let root = try FerryCrypto.nodeRootForReceiver(umk: umk, nodePk: node.publicKey)
+        try inbox.saveDevices([DeviceRecord(id: source, roles: ["source"], platform: "android", appVersion: nil, createdAt: 0, lastSeenAt: 0, profileVersion: 1, profile: DeviceProfile(name: "", nodePk: node.publicKey.base64URL))])
+        inbox.removedNodeKeys = [node.publicKey.base64URL]
+        let id = UUID().uuidString.lowercased()
+        let s = FerryCrypto.encryptNodeEvent(root: root, userId: user, sourceDeviceId: source, eventId: id, plaintext: Data(#"{"t":"sms","occurredAt":1,"sim":null,"from":"+1","body":"hi"}"#.utf8))
+        let e = StoredEvent(id: id, keyId: s.keyId, nonce: s.nonce, ct: s.ct, kind: "alert", seq: "1", sourceDeviceId: source, receivedAt: 1)
+        #expect(throws: FerryCrypto.CryptoError.self) { try receiver.ingest(e) }
+    }
+
+    @Test func introductionsFromTrustedNodesWaitForTheApp() throws {
+        let node = FerryCrypto.generateNodeKeyPair()
+        let root = try FerryCrypto.nodeRootForReceiver(umk: umk, nodePk: node.publicKey)
+        try inbox.saveDevices([DeviceRecord(id: source, roles: ["source"], platform: "android", appVersion: nil, createdAt: 0, lastSeenAt: 0, profileVersion: 1, profile: DeviceProfile(name: "Old phone", nodePk: node.publicKey.base64URL))])
+        let id = UUID().uuidString.lowercased()
+        let json = #"{"t":"introduce","occurredAt":1,"deviceId":"new-node","nodePk":"AAAA"}"#
+        let s = FerryCrypto.encryptNodeEvent(root: root, userId: user, sourceDeviceId: source, eventId: id, plaintext: Data(json.utf8))
+        let e = StoredEvent(id: id, keyId: s.keyId, nonce: s.nonce, ct: s.ct, kind: "alert", seq: "1", sourceDeviceId: source, receivedAt: 1)
+        guard case .introduced(let deviceId, let summary) = try receiver.ingest(e) else { Issue.record("expected introduced"); return }
+        #expect(deviceId == "new-node")
+        #expect(summary.title == "Old phone added a phone")
+        #expect(try inbox.introductions().map(\.by) == [source])
+        #expect(try inbox.threads().isEmpty)
+    }
+
+    @Test func sentTextsFollowTheNodesReports() throws {
+        let node = FerryCrypto.generateNodeKeyPair()
+        let root = try FerryCrypto.nodeRootForReceiver(umk: umk, nodePk: node.publicKey)
+        try inbox.saveDevices([DeviceRecord(id: source, roles: ["source"], platform: "android", appVersion: nil, createdAt: 0, lastSeenAt: 0, profileVersion: 1, profile: DeviceProfile(name: "", nodePk: node.publicKey.base64URL))])
+        func event(_ json: String) -> StoredEvent {
+            let id = UUID().uuidString.lowercased()
+            let s = FerryCrypto.encryptNodeEvent(root: root, userId: user, sourceDeviceId: source, eventId: id, plaintext: Data(json.utf8))
+            return StoredEvent(id: id, keyId: s.keyId, nonce: s.nonce, ct: s.ct, kind: "silent", seq: "1", sourceDeviceId: source, receivedAt: 1)
+        }
+        let thread = "p:\(source):+1"
+        _ = try receiver.ingest(event(#"{"t":"sms","occurredAt":20,"sim":null,"from":"+1","body":"On my way","direction":"out","commandId":"c1"}"#))
+        _ = try receiver.ingest(event(#"{"t":"sms_status","occurredAt":22,"commandId":"c1","status":"delivered"}"#))
+        _ = try receiver.ingest(event(#"{"t":"sms_status","occurredAt":21,"commandId":"c1","status":"sent"}"#))
+        let messages = try inbox.messages(thread: thread)
+        #expect(messages.count == 1)
+        #expect(messages.first?.id == "cmd:c1")
+        #expect(messages.first?.status == "delivered")
+        #expect(messages.first?.isOutgoing == true)
     }
 
     @Test func unknownTypeShowsPlaceholder() throws {

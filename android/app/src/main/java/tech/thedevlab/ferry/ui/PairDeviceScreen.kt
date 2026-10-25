@@ -61,8 +61,10 @@ import tech.thedevlab.ferry.data.Role
 private const val PAIRING_TTL_MS = 5 * 60_000f
 
 /**
- * Shows the pairing QR (§5.3). It contains the encryption key, so it's only shown after the
- * phone's lock screen check, screenshots are blocked, and it disappears after 5 minutes.
+ * Shows a pairing QR: §5.3 for a phone that reads messages (it contains the encryption key), or
+ * §5.6 flow B for a phone that relays its SIMs. Either one lets whoever scans it join the account,
+ * so it's only shown after the phone's lock screen check, screenshots are blocked, and it
+ * disappears after 5 minutes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,7 +72,9 @@ fun PairDeviceScreen(vm: AppViewModel, onBack: () -> Unit, modifier: Modifier = 
     val activity = LocalActivity.current as FragmentActivity
     val pairing by vm.pairing.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
-    var newRole by remember { mutableStateOf(Role.RECEIVER) }
+    // A node can only add other nodes (§5.6 flow C); phones that read need a key it doesn't have.
+    val node = vm.store.currentUmk == null
+    var newRole by remember { mutableStateOf(if (node) Role.SOURCE else Role.RECEIVER) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     DisposableEffect(Unit) {
@@ -94,41 +98,88 @@ fun PairDeviceScreen(vm: AppViewModel, onBack: () -> Unit, modifier: Modifier = 
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
             windowInsets = WindowInsets(0),
         )
-        val current = pairing?.takeIf { it.expiresAt > now }
-        AnimatedContent(current != null, label = "pairing") { showing ->
+        val current = pairing?.takeIf { it.paired || it.expiresAt > now }
+        val relay = newRole == Role.SOURCE
+        AnimatedContent(current, contentKey = { if (it == null) 0 else if (it.paired) 2 else 1 }, label = "pairing") { shown ->
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (!showing || current == null) {
-                    Text("What will the new device do?", style = MaterialTheme.typography.titleLarge)
-                    ChoiceRow(
-                        Icons.Default.PhoneIphone, Brand.Ocean, "Read messages",
-                        "The phone you carry — iPhone or Android.", selected = newRole == Role.RECEIVER,
-                    ) { newRole = Role.RECEIVER }
-                    if (Role.SOURCE in vm.store.roles) {
+                when {
+                    shown == null -> {
+                        Text(if (node) "Add a relaying phone" else "What will the new device do?", style = MaterialTheme.typography.titleLarge)
+                        if (!node) {
+                            ChoiceRow(
+                                Icons.Default.PhoneIphone, Brand.Ocean, "Read messages",
+                                "The phone you carry — iPhone or Android.", selected = newRole == Role.RECEIVER,
+                            ) { newRole = Role.RECEIVER }
+                        }
                         ChoiceRow(
                             Icons.Default.SimCard, Brand.Teal, "Relay its own SIMs",
-                            "Another Android phone with SIM cards.", selected = newRole == Role.SOURCE,
+                            "Another Android phone with SIM cards.", selected = relay,
                         ) { newRole = Role.SOURCE }
-                    }
-                    FerryCard {
-                        Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IconBadge(Icons.Default.Lock, Brand.Coral)
+                        if (node) {
                             Text(
-                                "The code contains your encryption key. Only show it to your own devices.",
+                                "To add a phone that reads messages, pair it from a phone that already reads them.",
+                                Modifier.padding(horizontal = 4.dp),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        FerryCard {
+                            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconBadge(Icons.Default.Lock, Brand.Coral)
+                                Text(
+                                    if (relay) {
+                                        "Whoever scans the code first joins your account as a relaying phone. Only show it to your own phones."
+                                    } else {
+                                        "The code contains your encryption key. Only show it to your own devices."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Button({ authenticate(activity) { vm.requestPairing(setOf(newRole)) } }, Modifier.fillMaxWidth().height(52.dp), enabled = !busy) {
+                            Icon(Icons.Default.Fingerprint, null)
+                            Spacer(Modifier.size(8.dp))
+                            Text(if (pairing != null) "Code expired — show a new one" else "Show pairing code")
+                        }
                     }
-                    Spacer(Modifier.height(4.dp))
-                    Button({ authenticate(activity) { vm.requestPairing(setOf(newRole)) } }, Modifier.fillMaxWidth().height(52.dp), enabled = !busy) {
-                        Icon(Icons.Default.Fingerprint, null)
-                        Spacer(Modifier.size(8.dp))
-                        Text(if (pairing != null) "Code expired — show a new one" else "Show pairing code")
+                    shown.paired -> {
+                        FerryCard {
+                            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Phone paired", style = MaterialTheme.typography.titleLarge)
+                                Text(
+                                    if (node) {
+                                        "Your phones that read messages will show it with a notification, and start receiving from it."
+                                    } else {
+                                        "Its messages will arrive here once it's set up. Its name and SIM labels come from that phone."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Button(onBack, Modifier.fillMaxWidth().height(52.dp)) { Text("Done") }
                     }
-                } else {
-                    QrPanel(current.link, current.expiresAt - now)
-                    Steps()
-                    TextButton({ vm.clearPairing() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Hide code") }
+                    else -> {
+                        QrPanel(shown.link, shown.expiresAt - now)
+                        Steps(
+                            if (relay) {
+                                listOf(
+                                    "Install Ferry on the Android phone with the SIM cards and open it.",
+                                    "Choose “It has the SIM cards”, then “No, pair with my device”.",
+                                    "Scan this code. The phone makes its own key and checks in here.",
+                                )
+                            } else {
+                                listOf(
+                                    "Install Ferry on the new device and open it.",
+                                    "Choose what the device does, then “pair with my device”.",
+                                    "Scan this code. That's it — the key travels only through the camera.",
+                                )
+                            },
+                        )
+                        TextButton({ vm.clearPairing() }, Modifier.align(Alignment.CenterHorizontally)) { Text("Hide code") }
+                    }
                 }
             }
         }
@@ -136,12 +187,12 @@ fun PairDeviceScreen(vm: AppViewModel, onBack: () -> Unit, modifier: Modifier = 
 }
 
 @Composable
-private fun QrPanel(link: String, leftMs: Long) {
+internal fun QrPanel(link: String, leftMs: Long, title: String = "Scan with Ferry on the new device") {
     val bitmap = remember(link) { qrBitmap(link) }
     val left = leftMs / 1000
     FerryCard {
         Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("Scan with Ferry on the new device", style = MaterialTheme.typography.titleMedium)
+            Text(title, style = MaterialTheme.typography.titleMedium)
             // Always black on white, so cameras read it in dark mode too.
             Box(Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).background(Color.White).padding(16.dp)) {
                 Image(bitmap, "Pairing code", Modifier.fillMaxWidth().aspectRatio(1f))
@@ -161,13 +212,9 @@ private fun QrPanel(link: String, leftMs: Long) {
 }
 
 @Composable
-private fun Steps() {
+internal fun Steps(steps: List<String>) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(horizontal = 4.dp)) {
-        listOf(
-            "Install Ferry on the new device and open it.",
-            "Choose what the device does, then “pair with my device”.",
-            "Scan this code. That's it — the key travels only through the camera.",
-        ).forEachIndexed { i, text ->
+        steps.forEachIndexed { i, text ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier.size(26.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),

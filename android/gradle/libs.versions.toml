@@ -12,8 +12,9 @@ room = "2.8.5"
 sqlcipher = "4.19.1"
 unifiedpush = "3.3.5"
 firebaseMessaging = "25.0.1"
-work = "2.12.0"
+work = "2.11.0"
 okhttp = "5.5.1"
+desugarJdkLibs = "2.1.5"
 bouncycastle = "1.85"
 zxing = "3.5.4"
 camera = "1.6.2"
@@ -47,6 +48,8 @@ firebase-messaging = { module = "com.google.firebase:firebase-messaging", versio
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutines" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
+okhttp-tls = { module = "com.squareup.okhttp3:okhttp-tls", version.ref = "okhttp" }
+desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 bouncycastle = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 junit = { module = "junit:junit", version.ref = "junit" }

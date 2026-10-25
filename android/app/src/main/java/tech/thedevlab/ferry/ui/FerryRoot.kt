@@ -42,10 +42,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import tech.thedevlab.ferry.data.Role
 
-enum class Screen { Home, Devices, Apps, Pair, History }
+enum class Screen { Home, Devices, Apps, Pair, History, NewMessage }
 
 /** Where the app is. Tabs aren't part of it: switching tabs is instant, moving between these slides. */
-private data class Dest(val onboarding: Boolean, val screen: Screen, val thread: ThreadTarget?) {
+private data class Dest(val onboarding: Boolean, val screen: Screen, val thread: ThreadTarget?, val awaitingKey: Boolean = false) {
     val depth get() = if (onboarding) -1 else if (thread != null) 2 else if (screen != Screen.Home) 1 else 0
 }
 
@@ -58,6 +58,8 @@ fun FerryRoot(
     onDeepLinkUsed: () -> Unit,
     threadLink: String?,
     onThreadLinkUsed: () -> Unit,
+    removeLink: String? = null,
+    onRemoveLinkUsed: () -> Unit = {},
     vm: AppViewModel = viewModel(),
 ) {
     // Re-read the store whenever it changes.
@@ -86,8 +88,21 @@ fun FerryRoot(
         }
     }
 
+    // An introduction's Remove button: open Devices and ask about that device (§4.7).
+    LaunchedEffect(removeLink) {
+        removeLink?.let {
+            screen = Screen.Home
+            thread = null
+            tab = Tab.Devices
+            vm.removeRequest.value = it
+            onRemoveLinkUsed()
+        }
+    }
+
     // Read here, not inside Scaffold's content lambda, so a store change re-evaluates it.
-    val onboarding = changes.let { !vm.store.isPaired && !vm.store.revoked }
+    // A new node waiting for its first receiver (§5.6 flow A) is still setting up.
+    val awaitingKey = changes.let { vm.store.awaitingKey }
+    val onboarding = changes.let { !vm.store.isPaired && !vm.store.revoked } || awaitingKey
     val roles = changes.let { vm.store.roles }
     val inbox = Role.RECEIVER in roles && !vm.store.revoked
     // A fresh setup starts at the inbox, and a phone that stopped relaying loses its tab.
@@ -122,7 +137,7 @@ fun FerryRoot(
         }
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         AnimatedContent(
-            Dest(onboarding, screen, thread),
+            Dest(onboarding, screen, thread, awaitingKey),
             // The bottom inset is left to each screen: the tab bar belongs to the tabbed screen and
             // slides away with it, so the content area never resizes mid-transition.
             Modifier.padding(top = padding.calculateTopPadding()),
@@ -136,13 +151,14 @@ fun FerryRoot(
                     else -> slideInHorizontally(tween(280)) { -it * dir / 4 } + fadeIn(tween(280), 0.6f) togetherWith slideOutHorizontally(tween(280)) { it * dir }
                 }.apply { targetContentZIndex = targetState.depth.toFloat() }
             },
-            contentKey = { if (it.thread != null) "thread:${it.thread.key}" else "${it.onboarding}:${it.screen}" },
+            contentKey = { if (it.thread != null) "thread:${it.thread.key}" else "${it.onboarding}:${it.awaitingKey}:${it.screen}" },
             label = "navigation",
         ) { d ->
             // Opaque, so the screen underneath doesn't show through while one slides over it.
             val page = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             val modifier = page.padding(bottom = padding.calculateBottomPadding())
             when {
+                d.awaitingKey -> NodeKeyScreen(vm, modifier)
                 d.onboarding -> OnboardingScreen(vm, deepLink, onDeepLinkUsed, modifier)
                 d.thread != null -> ThreadScreen(vm, d.thread, onBack = { thread = null }, modifier)
                 else -> when (d.screen) {
@@ -166,6 +182,11 @@ fun FerryRoot(
                     Screen.Apps -> AppsScreen(vm, onBack = { screen = Screen.Home }, modifier)
                     Screen.Pair -> PairDeviceScreen(vm, onBack = { screen = Screen.Home }, modifier)
                     Screen.History -> HistoryScreen(vm, changes, onBack = { screen = Screen.Home }, modifier)
+                    // Back from the conversation it opens goes to the inbox, not back here.
+                    Screen.NewMessage -> NewMessageScreen(vm, onBack = { screen = Screen.Home }, onSent = {
+                        screen = Screen.Home
+                        thread = ThreadTarget(it, latest = true)
+                    }, modifier)
                 }
             }
         }

@@ -16,7 +16,7 @@ export type Role = 'source' | 'receiver';
 
 export interface UserRow {
   id: string;
-  key_id: string;
+  key_id: string | null; // null until the first receiver sets it (§5.6 flow A)
   seq: number;
   created_at: number;
 }
@@ -40,7 +40,22 @@ export interface DeviceRow {
   profile_nonce: string | null;
   profile_ct: string | null;
   ack_seq: number;
+  key_id: string | null; // a source-only node's own key ID (§3.7)
 }
+
+export interface CommandRow {
+  node_id: string;
+  id: string;
+  user_id: string;
+  sender_id: string;
+  key_id: string;
+  nonce: string;
+  ct: string;
+  created_at: number;
+}
+
+/** Commands expire on the node within 10 minutes (§6.6); the server drops them a little later. */
+export const COMMAND_TTL_MS = 15 * 60_000;
 
 export interface EventRow {
   user_id: string;
@@ -57,7 +72,7 @@ export interface EventRow {
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id         TEXT PRIMARY KEY,
-  key_id     TEXT NOT NULL,
+  key_id     TEXT,
   seq        BIGINT NOT NULL DEFAULT 0,
   created_at BIGINT NOT NULL
 );
@@ -83,6 +98,9 @@ CREATE TABLE IF NOT EXISTS devices (
   ack_seq         BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
+-- Added for v2 (§3.7); servers created before it get them here.
+ALTER TABLE users ALTER COLUMN key_id DROP NOT NULL;
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS key_id TEXT;
 
 CREATE TABLE IF NOT EXISTS invites (
   code_hash  TEXT PRIMARY KEY,
@@ -98,6 +116,11 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
   expires_at BIGINT NOT NULL,
   used_at    BIGINT
 );
+-- §5.6 reply mailbox: one message from the device that made the code, one from the device that used it.
+ALTER TABLE pairing_codes ADD COLUMN IF NOT EXISTS created_by  TEXT;
+ALTER TABLE pairing_codes ADD COLUMN IF NOT EXISTS claimed_by  TEXT;
+ALTER TABLE pairing_codes ADD COLUMN IF NOT EXISTS owner_msg   TEXT;
+ALTER TABLE pairing_codes ADD COLUMN IF NOT EXISTS claimer_msg TEXT;
 
 CREATE TABLE IF NOT EXISTS events (
   user_id          TEXT NOT NULL REFERENCES users(id),
@@ -113,6 +136,20 @@ CREATE TABLE IF NOT EXISTS events (
   UNIQUE (user_id, id)
 );
 CREATE INDEX IF NOT EXISTS events_received ON events(received_at);
+
+-- §6.6: commands from receivers to one node, until it acks them.
+CREATE TABLE IF NOT EXISTS commands (
+  node_id    TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  sender_id  TEXT NOT NULL,
+  key_id     TEXT NOT NULL,
+  nonce      TEXT NOT NULL,
+  ct         TEXT NOT NULL,
+  created_at BIGINT NOT NULL,
+  PRIMARY KEY (node_id, id)
+);
+CREATE INDEX IF NOT EXISTS commands_created ON commands(created_at);
 `;
 
 export async function openDb(connectionString: string): Promise<Db> {
@@ -142,6 +179,14 @@ export function rolesOf(device: DeviceRow): Role[] {
   return JSON.parse(device.roles);
 }
 
+/** A source without the receiver role holds only its own node key, never the UMK (§3.7). */
+export function isNode(device: DeviceRow): boolean {
+  return !rolesOf(device).includes('receiver');
+}
+
+/** How long a used or expired pairing code's mailbox stays readable (§5.6). */
+export const PAIRING_GRACE_MS = 10 * 60_000;
+
 const IS_RECEIVER = `roles::jsonb ? 'receiver'`;
 
 export async function activeReceivers(db: Queryable, userId: string): Promise<DeviceRow[]> {
@@ -156,8 +201,9 @@ export async function activeReceivers(db: Queryable, userId: string): Promise<De
 // and stale pairing codes.
 export async function prune(db: Queryable, now: number, retentionDays: number, userId?: string): Promise<void> {
   await db.query('DELETE FROM events WHERE received_at < $1', [now - retentionDays * 86_400_000]);
-  await db.query('DELETE FROM pairing_codes WHERE expires_at < $1', [now]);
+  await db.query('DELETE FROM pairing_codes WHERE expires_at < $1', [now - PAIRING_GRACE_MS]);
   await db.query('DELETE FROM invites WHERE used_at IS NULL AND expires_at < $1', [now]);
+  await db.query('DELETE FROM commands WHERE created_at < $1', [now - COMMAND_TTL_MS]);
   await db.query(
     `DELETE FROM events e USING (
        SELECT user_id, MIN(ack_seq) AS m FROM devices

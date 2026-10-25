@@ -3,6 +3,7 @@ import type { Config } from './config.ts';
 import { rolesOf, type Db, type DeviceRow, type Role } from './db.ts';
 import { createPusher, type Pusher } from './push/index.ts';
 import { accountRoutes } from './routes/accounts.ts';
+import { commandRoutes } from './routes/commands.ts';
 import { deviceRoutes } from './routes/devices.ts';
 import { eventRoutes } from './routes/events.ts';
 import { ApiError, hashToken } from './util.ts';
@@ -94,6 +95,7 @@ export function buildApp(opts: AppOptions): FastifyInstance {
   accountRoutes(app, ctx);
   deviceRoutes(app, ctx);
   eventRoutes(app, ctx);
+  commandRoutes(app, ctx);
 
   return app;
 }

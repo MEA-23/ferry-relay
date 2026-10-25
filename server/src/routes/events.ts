@@ -2,12 +2,13 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { Ctx } from '../app.ts';
-import { activeReceivers, prune, type EventRow, type UserRow } from '../db.ts';
+import { activeReceivers, isNode, prune, type EventRow, type UserRow } from '../db.ts';
 import { buildSr, serializeEvent, type PushTarget } from '../push/index.ts';
 import { ApiError, KEY_ID, NONCE, S } from '../util.ts';
 
 // Max padded plaintext 256 KiB + 16-byte tag, base64url-encoded.
 const CT_MAX = Math.ceil(((256 * 1024 + 16) * 4) / 3);
+const MAX_WAIT_S = 30;
 
 interface Envelope {
   id: string;
@@ -30,6 +31,11 @@ const envelopeSchema = {
 };
 
 export function eventRoutes(app: FastifyInstance, { db, config, pusher, now, auth, role }: Ctx): void {
+  // Long polls from open apps, per account; a stored event wakes them (§6.5).
+  const waiters = new Map<string, Set<() => void>>();
+  const wake = (userId: string) => waiters.get(userId)?.forEach((done) => done());
+  app.addHook('onClose', async () => waiters.forEach((set) => set.forEach((done) => done())));
+
   async function fanOut(userId: string, sourceId: string, events: EventRow[]): Promise<void> {
     const alerts = events.filter((e) => e.kind === 'alert');
     if (alerts.length === 0) return;
@@ -77,7 +83,9 @@ export function eventRoutes(app: FastifyInstance, { db, config, pusher, now, aut
       await db.tx(async (q) => {
         // Locking the user row serializes concurrent uploads for this account.
         const [user] = (await q.query<Pick<UserRow, 'key_id'>>('SELECT key_id FROM users WHERE id = $1 FOR UPDATE', [userId])).rows;
-        if (req.body.events.some((e) => e.keyId !== user.key_id)) {
+        // Nodes encrypt with their own root, devices that also receive with the UMK (§3.7).
+        const current = isNode(req.device) ? req.device.key_id : user.key_id;
+        if (current === null || req.body.events.some((e) => e.keyId !== current)) {
           throw new ApiError(409, 'key_rotated', 'Event keyId is not the account’s current key');
         }
         const seen = new Set<string>();
@@ -97,34 +105,56 @@ export function eventRoutes(app: FastifyInstance, { db, config, pusher, now, aut
         }
       });
 
+      if (stored.length) wake(userId);
       await fanOut(userId, sourceId, stored).catch((err) => app.log.warn({ err }, 'push fan-out failed'));
       return { accepted: stored.map((e) => e.id), duplicate };
     },
   );
 
-  app.get<{ Querystring: { after?: string; limit?: number } }>(
+  app.get<{ Querystring: { after?: string; limit?: number; wait?: number } }>(
     '/v1/events',
     {
       preHandler: [auth, role('receiver')],
       schema: {
         querystring: {
           type: 'object',
-          properties: { after: S.seq, limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 } },
+          properties: {
+            after: S.seq,
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+            wait: { type: 'integer', minimum: 0, maximum: MAX_WAIT_S, default: 0 },
+          },
         },
       },
     },
     async (req) => {
+      const userId = req.device.user_id;
       const after = Number(req.query.after ?? 0);
       const limit = req.query.limit ?? 100;
-      const { rows } = await db.query<EventRow>('SELECT * FROM events WHERE user_id = $1 AND seq > $2 ORDER BY seq LIMIT $3', [
-        req.device.user_id,
-        after,
-        limit + 1,
-      ]);
-      const page = rows.slice(0, limit);
+      const page = async () =>
+        (await db.query<EventRow>('SELECT * FROM events WHERE user_id = $1 AND seq > $2 ORDER BY seq LIMIT $3', [userId, after, limit + 1]))
+          .rows;
+      let rows = await page();
+      if (rows.length === 0 && (req.query.wait ?? 0) > 0) {
+        await new Promise<void>((resolve) => {
+          const set = waiters.get(userId) ?? new Set();
+          waiters.set(userId, set);
+          const done = () => {
+            clearTimeout(timer);
+            set.delete(done);
+            if (set.size === 0) waiters.delete(userId);
+            req.raw.off('close', done);
+            resolve();
+          };
+          const timer = setTimeout(done, (req.query.wait ?? 0) * 1000);
+          set.add(done);
+          req.raw.once('close', done);
+        });
+        rows = await page();
+      }
+      const events = rows.slice(0, limit);
       return {
-        events: page.map(serializeEvent),
-        next: String(page.at(-1)?.seq ?? after),
+        events: events.map(serializeEvent),
+        next: String(events.at(-1)?.seq ?? after),
         hasMore: rows.length > limit,
       };
     },

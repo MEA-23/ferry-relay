@@ -27,7 +27,13 @@ final class NotificationService: UNNotificationServiceExtension {
                     content.threadIdentifier = message.threadKey
                     content.userInfo["thread"] = message.threadKey
                     if message.type == "notification" { content.sound = nil }
-                case .duplicate, .quiet, .filed:
+                case .introduced(let deviceId, let summary):
+                    // A node added a node (§4.7): say so, with a Remove button.
+                    content.title = summary.title
+                    content.body = summary.body
+                    content.categoryIdentifier = "introduction"
+                    content.userInfo["removeDevice"] = deviceId
+                case .duplicate, .quiet, .filed, .profile:
                     break
                 }
                 if let unread = try? Inbox.shared.unreadCount() { content.badge = NSNumber(value: unread) }

@@ -7,8 +7,10 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
+import android.telephony.PhoneNumberUtils
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import android.telephony.TelephonyManager
 import tech.thedevlab.ferry.granted
 import tech.thedevlab.ferry.model.Sim
 
@@ -47,6 +49,16 @@ object Sims {
             info.number
         }
     }.getOrNull()?.takeIf { it.isNotBlank() }
+}
+
+/** Whether two numbers are the same phone, however they're written ("+49 151…" and "0151…"). */
+fun samePhoneNumber(context: Context, a: String, b: String): Boolean {
+    if (Build.VERSION.SDK_INT >= 31) {
+        val country = context.getSystemService(TelephonyManager::class.java)?.simCountryIso.orEmpty()
+        return PhoneNumberUtils.areSamePhoneNumber(a, b, country)
+    }
+    @Suppress("DEPRECATION")
+    return PhoneNumberUtils.compare(a, b)
 }
 
 object Contacts {

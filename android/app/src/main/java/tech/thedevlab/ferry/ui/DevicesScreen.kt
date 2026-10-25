@@ -51,6 +51,17 @@ fun DevicesScreen(vm: AppViewModel, onBack: (() -> Unit)?, onPair: () -> Unit, m
     val busy by vm.busy.collectAsStateWithLifecycle()
     var confirm by remember { mutableStateOf<DeviceItem?>(null) }
     LaunchedEffect(Unit) { vm.refreshDevices() }
+    // A node can't read the others' names (§3.7), or remove phones that read messages.
+    val node = vm.store.currentUmk == null
+    // An introduction's Remove button lands here (§4.7).
+    val removeRequest by vm.removeRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(removeRequest, devices) {
+        val id = removeRequest ?: return@LaunchedEffect
+        devices.find { it.id == id }?.let {
+            confirm = it
+            vm.removeRequest.value = null
+        }
+    }
 
     Column(modifier) {
         CenterAlignedTopAppBar(
@@ -63,10 +74,11 @@ fun DevicesScreen(vm: AppViewModel, onBack: (() -> Unit)?, onPair: () -> Unit, m
         PullToRefreshBox(busy, { vm.refreshDevices() }, Modifier.fillMaxSize()) {
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp)) {
                 item {
-                    FormSection(footer = "Every device shares your encryption key. If a phone is lost, remove it here, then re-pair the rest from a fresh account.") {
+                    val footer = if (node) "Name these phones on the phone you read messages on." else null
+                    FormSection(footer = footer) {
                         devices.forEachIndexed { i, d ->
                             if (i > 0) FormDivider(start = 64.dp)
-                            DeviceRow(d) { confirm = d }
+                            DeviceRow(d, removable = !node || d.isSelf || "receiver" !in d.roles) { confirm = d }
                         }
                     }
                 }
@@ -75,23 +87,35 @@ fun DevicesScreen(vm: AppViewModel, onBack: (() -> Unit)?, onPair: () -> Unit, m
     }
 
     confirm?.let { d ->
+        // Removing a node also cancels its introductions; offer to remove the phones it added (§5.4).
+        val added = devices.filter { it.addedById == d.id && !it.isSelf }
         AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text("Remove ${d.name}?") },
             text = {
                 Text(
-                    if (d.isSelf) {
-                        "This phone stops sending and receiving through your account, and you'll need to pair it again."
-                    } else {
-                        "It stops sending and receiving through your account. It still knows your key — re-pairing everything under a new account is the only way to fully lock it out."
+                    when {
+                        d.isSelf -> "This phone leaves your account and everything Ferry stored on it is deleted. You can pair it again later."
+                        "receiver" !in d.roles -> "It stops relaying to your phones." +
+                            if (added.isEmpty()) "" else " It added ${added.joinToString { it.name }}."
+                        else -> "It stops receiving your messages. If the phone is lost, also set up a new account and pair your phones again."
                     },
                 )
             },
             confirmButton = {
-                TextButton({
-                    vm.revoke(d.id)
-                    confirm = null
-                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                Column(horizontalAlignment = Alignment.End) {
+                    if (added.isNotEmpty()) {
+                        TextButton({
+                            vm.revoke(d.id, *added.map { it.id }.toTypedArray())
+                            confirm = null
+                        }) { Text("Remove all ${added.size + 1}", color = MaterialTheme.colorScheme.error) }
+                    }
+                    TextButton({
+                        // Removing this phone also wipes it, as Settings does.
+                        if (d.isSelf) vm.leave() else vm.revoke(d.id)
+                        confirm = null
+                    }) { Text(if (added.isEmpty()) "Remove" else "Remove only ${d.name}", color = MaterialTheme.colorScheme.error) }
+                }
             },
             dismissButton = { TextButton({ confirm = null }) { Text("Cancel") } },
         )
@@ -99,11 +123,11 @@ fun DevicesScreen(vm: AppViewModel, onBack: (() -> Unit)?, onPair: () -> Unit, m
 }
 
 @Composable
-private fun DeviceRow(d: DeviceItem, onRemove: () -> Unit) {
+private fun DeviceRow(d: DeviceItem, removable: Boolean, onRemove: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val relays = "source" in d.roles
-    // Sources heartbeat at least every 6 hours (§4.5); warn after 12 hours of silence.
-    val stale = relays && !d.isSelf && System.currentTimeMillis() - d.lastSeenAt > 12 * 3_600_000L
+    // Sources heartbeat at least every hour (§4.5); warn after 3 hours of silence.
+    val stale = relays && !d.isSelf && System.currentTimeMillis() - d.lastSeenAt > 3 * 3_600_000L
     var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
@@ -122,12 +146,16 @@ private fun DeviceRow(d: DeviceItem, onRemove: () -> Unit) {
                 if (d.isSelf) Pill("This phone", colors.onSurfaceVariant)
             }
             Text(if (relays) "Relays texts, calls & notifications" else "Receives", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+            d.addedBy?.let { Text("Added by $it", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
             if (!d.isSelf) {
-                Text("Last seen ${relative(d.lastSeenAt)}", style = MaterialTheme.typography.bodySmall, color = if (stale) Color(0xFFFF9500) else colors.onSurfaceVariant)
+                val missing = d.missing.takeIf { it.isNotEmpty() }
+                    ?.let { " · can't relay " + listOf(it.dropLast(1).joinToString(", "), it.last()).filter(String::isNotEmpty).joinToString(" and ") }
+                    .orEmpty()
+                Text("Last seen ${relative(d.lastSeenAt)}$missing", style = MaterialTheme.typography.bodySmall, color = if (stale) Color(0xFFFF9500) else colors.onSurfaceVariant)
             }
         }
         // Anchored to its button at the end of the row, so the menu opens there instead of over the name.
-        Box {
+        if (removable) Box {
             IconButton({ menu = true }) { Icon(Icons.Default.MoreVert, "More for ${d.name}", tint = colors.onSurfaceVariant) }
             DropdownMenu(menu, { menu = false }) {
                 DropdownMenuItem({ Text("Remove", color = colors.error) }, {

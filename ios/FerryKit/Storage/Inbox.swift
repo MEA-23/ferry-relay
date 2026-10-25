@@ -14,6 +14,8 @@ public struct Message: Identifiable, Hashable, Sendable {
     public let receivedAt: Int64
     public let unread: Bool
     public let event: FerryEvent?
+    /// A text sent from a receiver through a node (§6.6): sending · sent · delivered · failed:<reason>.
+    public var status: String? = nil
 
     public var date: Date { Date(timeIntervalSince1970: TimeInterval(occurredAt) / 1000) }
 
@@ -102,14 +104,18 @@ public struct Inbox: Sendable {
               created_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, profile_version INTEGER, profile BLOB);
             CREATE TABLE IF NOT EXISTS statuses (device_id TEXT PRIMARY KEY, occurred_at INTEGER NOT NULL, payload BLOB NOT NULL);
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS held (id TEXT PRIMARY KEY, payload BLOB NOT NULL, received_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS introductions (event_id TEXT PRIMARY KEY, by_device TEXT NOT NULL, device_id TEXT NOT NULL, node_pk TEXT NOT NULL);
             """)
         try migrate(db)
         return db
     }
 
     /// Version 1 adds `search_text`, the normalized body that search matches against, and fills it in.
+    /// Version 2 adds `status`, for texts sent through a node (§6.6).
     private func migrate(_ db: SQLite) throws {
-        guard (try db.query("PRAGMA user_version").first?.int("user_version") ?? 0) < 1 else { return }
+        let version = try db.query("PRAGMA user_version").first?.int("user_version") ?? 0
+        guard version < 2 else { return }
         try db.transaction {
             // The app and the extension may both get here; whichever is second finds the column there.
             let columns = try db.query("PRAGMA table_info(messages)").compactMap { $0.text("name") }
@@ -117,7 +123,8 @@ public struct Inbox: Sendable {
             for r in try db.query("SELECT row_key, body FROM messages WHERE search_text IS NULL") {
                 try db.run("UPDATE messages SET search_text = ? WHERE row_key = ?", [.text(TextTools.normalize(r.text("body") ?? "")), .text(r.text("row_key"))])
             }
-            try db.exec("PRAGMA user_version = 1")
+            if !columns.contains("status") { try db.exec("ALTER TABLE messages ADD COLUMN status TEXT") }
+            try db.exec("PRAGMA user_version = 2")
         }
     }
 
@@ -136,20 +143,47 @@ public struct Inbox: Sendable {
         let db = try open()
         try db.transaction {
             let rowKey = mergeKey ?? m.eventId
-            let existing = try db.query("SELECT occurred_at FROM messages WHERE row_key = ?", [.text(rowKey)]).first
-            if let existing, (existing.int("occurred_at") ?? 0) > m.occurredAt {
-                return // a later state of this call already arrived
+            let existing = try db.query("SELECT occurred_at, status FROM messages WHERE row_key = ?", [.text(rowKey)]).first
+            var status = m.status
+            if let existing {
+                if let old = existing.text("status") {
+                    // A text sent through a node: the node's copy replaces the one queued here, and
+                    // whichever status is further along stays (§4.8).
+                    if Self.statusRank(old) > Self.statusRank(status ?? "") { status = old }
+                } else if (existing.int("occurred_at") ?? 0) > m.occurredAt {
+                    return // a later state of this call already arrived
+                }
             }
             try db.run(
                 """
                 INSERT OR REPLACE INTO messages
-                  (row_key, event_id, source_device_id, type, thread_key, title, body, sim_slot, occurred_at, received_at, unread, payload, search_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  (row_key, event_id, source_device_id, type, thread_key, title, body, sim_slot, occurred_at, received_at, unread, payload, search_text, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [.text(rowKey), .text(m.eventId), .text(m.sourceDeviceId), .text(m.type), .text(m.threadKey), .text(m.title),
                  .text(m.body), .int(m.simSlot), .int(m.occurredAt), .int(m.receivedAt), .int(m.unread ? 1 : 0), .blob(payload),
-                 .text(TextTools.normalize(m.body))]
+                 .text(TextTools.normalize(m.body)), .text(status)]
             )
+        }
+    }
+
+    /// Applies a §4.8 status to a sent text; statuses never move backwards.
+    func updateStatus(rowKey: String, status: String) throws {
+        let db = try open()
+        try db.transaction {
+            guard let old = try db.query("SELECT status FROM messages WHERE row_key = ?", [.text(rowKey)]).first?.text("status"),
+                  Self.statusRank(status) > Self.statusRank(old) else { return }
+            try db.run("UPDATE messages SET status = ? WHERE row_key = ?", [.text(status), .text(rowKey)])
+        }
+    }
+
+    static func statusRank(_ status: String) -> Int {
+        switch status {
+        case "": -1
+        case "sending": 0
+        case "sent": 1
+        case "delivered": 2
+        default: 3 // failed:<reason>
         }
     }
 
@@ -197,7 +231,7 @@ public struct Inbox: Sendable {
             id: r.text("row_key")!, eventId: r.text("event_id")!, sourceDeviceId: r.text("source_device_id")!,
             type: r.text("type")!, threadKey: r.text("thread_key")!, title: r.text("title")!, body: r.text("body")!,
             simSlot: r.int("sim_slot").map(Int.init), occurredAt: r.int("occurred_at")!, receivedAt: r.int("received_at")!,
-            unread: r.int("unread") == 1, event: r.blob("payload").flatMap { try? FerryEvent.decode($0) }
+            unread: r.int("unread") == 1, event: r.blob("payload").flatMap { try? FerryEvent.decode($0) }, status: r.text("status")
         )
     }
 
@@ -249,6 +283,61 @@ public struct Inbox: Sendable {
         try? devices().first { $0.id == id }
     }
 
+    // ── node trust (§3.7) ────────────────────────────────────────────────────
+
+    /// Public keys of nodes that were removed. Never trusted again, whatever the server says.
+    public var removedNodeKeys: Set<String> {
+        get {
+            guard let json = try? open().query("SELECT value FROM meta WHERE key = 'removedNodeKeys'").first?.text("value") else { return [] }
+            return (try? JSONDecoder().decode(Set<String>.self, from: Data(json.utf8))) ?? []
+        }
+        nonmutating set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            _ = try? open().run("INSERT OR REPLACE INTO meta (key, value) VALUES ('removedNodeKeys', ?)", [.text(String(decoding: data, as: UTF8.self))])
+        }
+    }
+
+    /// Keeps an event from a node with no trusted profile yet, to retry after the next device refresh.
+    func hold(_ e: StoredEvent) throws {
+        try open().run("INSERT OR IGNORE INTO held (id, payload, received_at) VALUES (?, ?, ?)", [.text(e.id), .blob(try JSONEncoder().encode(e)), .int(e.receivedAt)])
+    }
+
+    func held() throws -> [StoredEvent] {
+        try open().query("SELECT payload FROM held ORDER BY received_at").compactMap { r in
+            r.blob("payload").flatMap { try? JSONDecoder().decode(StoredEvent.self, from: $0) }
+        }
+    }
+
+    func release(_ id: String) throws {
+        try open().run("DELETE FROM held WHERE id = ?", [.text(id)])
+    }
+
+    /// Introductions (§4.7) waiting for the app to check and accept. The extension may decrypt one
+    /// first, and it can't rewrite profiles, so it leaves them here.
+    public struct Introduction: Sendable {
+        public let eventId: String
+        public let by: String
+        public let deviceId: String
+        public let nodePk: String
+    }
+
+    func saveIntroduction(_ i: Introduction) throws {
+        try open().run(
+            "INSERT OR IGNORE INTO introductions (event_id, by_device, device_id, node_pk) VALUES (?, ?, ?, ?)",
+            [.text(i.eventId), .text(i.by), .text(i.deviceId), .text(i.nodePk)]
+        )
+    }
+
+    func introductions() throws -> [Introduction] {
+        try open().query("SELECT * FROM introductions").map {
+            Introduction(eventId: $0.text("event_id")!, by: $0.text("by_device")!, deviceId: $0.text("device_id")!, nodePk: $0.text("node_pk")!)
+        }
+    }
+
+    func removeIntroduction(_ eventId: String) throws {
+        try open().run("DELETE FROM introductions WHERE event_id = ?", [.text(eventId)])
+    }
+
     // ── sync state ───────────────────────────────────────────────────────────
 
     public var watermark: String? {
@@ -261,6 +350,7 @@ public struct Inbox: Sendable {
 
     public func pruneSeen(now: Int64) throws {
         try open().run("DELETE FROM seen WHERE at < ?", [.int(now - Self.seenRetentionMs)])
+        try open().run("DELETE FROM held WHERE received_at < ?", [.int(now - Self.seenRetentionMs)])
     }
 
     /// Removes every decrypted message, cached device and the inbox key. Used when leaving the

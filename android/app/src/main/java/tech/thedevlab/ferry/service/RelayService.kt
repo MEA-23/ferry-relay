@@ -9,6 +9,8 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import tech.thedevlab.ferry.Notifications
 import tech.thedevlab.ferry.capture.OutgoingSmsObserver
 import tech.thedevlab.ferry.capture.Sims
@@ -16,6 +18,7 @@ import tech.thedevlab.ferry.capture.SmsHistory
 import tech.thedevlab.ferry.data.Role
 import tech.thedevlab.ferry.graph
 import tech.thedevlab.ferry.push.Push
+import tech.thedevlab.ferry.relay.Commands
 import tech.thedevlab.ferry.relay.FlushWorker
 import tech.thedevlab.ferry.relay.PullWorker
 
@@ -27,10 +30,14 @@ import tech.thedevlab.ferry.relay.PullWorker
 class RelayService : Service() {
     private var outgoing: OutgoingSmsObserver? = null
 
+    /** The §6.6 command long poll, for a node; it lives exactly as long as relaying does. */
+    private var commands: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         outgoing?.unregister()
+        commands?.cancel()
         super.onDestroy()
     }
 
@@ -43,6 +50,7 @@ class RelayService : Service() {
         ServiceCompat.startForeground(this, Notifications.ID_RELAY, Notifications.relay(this, statusText()), type)
         // Registered once READ_SMS is granted; the app restarts the service when permissions change.
         if (outgoing == null && SmsHistory.canRead(this)) outgoing = OutgoingSmsObserver(this).also { it.register() }
+        if (commands?.isActive != true && graph.store.nodeRoot != null) commands = graph.scope.launch { Commands(this@RelayService).run() }
         FlushWorker.enqueue(this)
         return START_STICKY
     }
@@ -78,6 +86,7 @@ object Roles {
         if (store.has(Role.SOURCE)) {
             RelayService.start(context)
             HeartbeatWorker.schedule(context)
+            HeartbeatWorker.reportIfChanged(context)
         } else {
             RelayService.stop(context)
         }

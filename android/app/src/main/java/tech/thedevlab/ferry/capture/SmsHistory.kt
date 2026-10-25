@@ -86,6 +86,16 @@ object SmsHistory {
         }
     }
 
+    /** Whether this phone's SMS store has texts to or from [number] (§6.6 known numbers). */
+    fun knows(context: Context, number: String): Boolean {
+        if (!canRead(context)) return false
+        return runCatching {
+            // PHONE_NUMBERS_EQUAL matches "+49 151…" with "0151…", as the SMS app does.
+            context.contentResolver.query(Sms.CONTENT_URI, arrayOf(Sms._ID), "PHONE_NUMBERS_EQUAL(${Sms.ADDRESS}, ?)", arrayOf(number), null)
+                ?.use { it.moveToFirst() } ?: false
+        }.getOrDefault(false)
+    }
+
     /** Sent SMS newer than the watermark, which then moves past them. */
     fun takeNewOutgoing(context: Context): List<SmsEvent> {
         if (!canRead(context)) return emptyList()
@@ -141,6 +151,14 @@ class OutgoingSmsObserver(private val context: Context) : ContentObserver(Handle
 
     override fun onChange(selfChange: Boolean) {
         val g = context.graph
-        g.scope.launch { g.relay.submitAll(SmsHistory.takeNewOutgoing(context)) }
+        g.scope.launch {
+            // Texts Ferry sent for a receiver (§6.6) were relayed with their command already; Android
+            // also files them in the SMS store, which would relay them a second time.
+            val ours = g.db.sent().since(System.currentTimeMillis() - 30 * 60_000)
+            val events = SmsHistory.takeNewOutgoing(context).filterNot { e ->
+                ours.any { it.body == e.body && samePhoneNumber(context, it.to, e.from) }
+            }
+            g.relay.submitAll(events)
+        }
     }
 }

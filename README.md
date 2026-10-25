@@ -46,7 +46,7 @@ up the others again from a fresh account.
 
 ## Install
 
-### Android (8.0 or newer)
+### Android (6.0 or newer)
 
 Ferry isn't on Google Play: Google only allows SMS and call-log access for default messaging
 apps. Install the APK instead:
@@ -71,6 +71,7 @@ On the relaying phone, Ferry walks you through these on its home screen:
 | Run in background (battery) | Stop Android from pausing Ferry | Strongly recommended |
 | Notification access | Relay notifications from the apps you pick | Optional |
 | Contacts | Show names instead of numbers | Optional |
+| Send SMS | Send the replies you write on your other phones | Optional |
 | Camera | Scan the pairing code | Only while pairing |
 
 #### Notification access on a sideloaded app
@@ -101,8 +102,9 @@ On Samsung, Xiaomi, Huawei and OnePlus also check the manufacturer's own battery
 
 Ferry for iPhone is in beta on TestFlight: <!-- TODO: TestFlight link --> *link coming soon*.
 
-On the iPhone, tap **Pair with my Android phone** and scan the code from Ferry on Android
-(**Pair a device**).
+Set up the Android phone first (**It has the SIM cards** → **Yes, start fresh**). It shows a code.
+On the iPhone, tap **Pair with my Android phone** and scan it. The iPhone makes your encryption
+key; the Android phone gets a key of its own and never sees yours.
 
 <img src="docs/screenshots/ios-welcome.png" width="200" alt="Ferry's welcome screen on iPhone">
 

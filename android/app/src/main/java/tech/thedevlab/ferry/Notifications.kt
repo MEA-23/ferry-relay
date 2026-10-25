@@ -2,11 +2,11 @@ package tech.thedevlab.ferry
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import tech.thedevlab.ferry.data.Message
@@ -16,6 +16,7 @@ object Notifications {
     const val CHANNEL_RELAY = "relay"
     const val CHANNEL_INCOMING = "incoming"
     const val CHANNEL_ALERTS = "alerts"
+    const val CHANNEL_DEVICES = "devices"
     const val ID_RELAY = 1
     private const val ID_ALERT = 2
     const val ID_SYNC = 3
@@ -23,17 +24,19 @@ object Notifications {
     /** Intent extra: the thread a tapped message notification belongs to. */
     const val EXTRA_THREAD = "thread"
 
+    /** Intent extra: a device to offer removing, from an introduction's Remove button. */
+    const val EXTRA_REMOVE_DEVICE = "removeDevice"
+
+    /** Channels exist from Android 8; the compat calls do nothing before that. */
     fun createChannels(context: Context) {
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannels(
+        fun channel(id: String, name: String, importance: Int, description: String? = null) =
+            NotificationChannelCompat.Builder(id, importance).setName(name).setDescription(description).build()
+        NotificationManagerCompat.from(context).createNotificationChannelsCompat(
             listOf(
-                NotificationChannel(CHANNEL_RELAY, "Relay status", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Shown while Ferry relays this phone's messages"
-                },
-                NotificationChannel(CHANNEL_INCOMING, "Relayed messages", NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "Messages received from your other phones"
-                },
-                NotificationChannel(CHANNEL_ALERTS, "Problems", NotificationManager.IMPORTANCE_DEFAULT),
+                channel(CHANNEL_RELAY, "Relay status", NotificationManagerCompat.IMPORTANCE_LOW, "Shown while Ferry relays this phone's messages"),
+                channel(CHANNEL_INCOMING, "Relayed messages", NotificationManagerCompat.IMPORTANCE_HIGH, "Messages received from your other phones"),
+                channel(CHANNEL_ALERTS, "Problems", NotificationManagerCompat.IMPORTANCE_DEFAULT),
+                channel(CHANNEL_DEVICES, "New devices", NotificationManagerCompat.IMPORTANCE_HIGH, "A relaying phone added another phone to your account"),
             ),
         )
     }
@@ -92,6 +95,35 @@ object Notifications {
             .setContentTitle("Checking for new messages")
             .setSilent(true)
             .build()
+
+    /**
+     * A node added another node (§4.7). Nothing waits for approval; this says it happened, with a
+     * way to undo it if it wasn't you.
+     */
+    fun introduced(context: Context, introducer: String, deviceId: String) {
+        val remove = PendingIntent.getActivity(
+            context,
+            deviceId.hashCode(),
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(EXTRA_REMOVE_DEVICE, deviceId),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        post(
+            context,
+            deviceId.hashCode(),
+            NotificationCompat.Builder(context, CHANNEL_DEVICES)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("$introducer added a phone")
+                .setContentText("A new phone now relays to your account. If that wasn't you, remove it.")
+                .setStyle(NotificationCompat.BigTextStyle().bigText("A new phone now relays to your account. If that wasn't you, remove it."))
+                .setCategory(NotificationCompat.CATEGORY_STATUS)
+                .setAutoCancel(true)
+                .setContentIntent(openApp(context))
+                .addAction(0, "Remove", remove)
+                .build(),
+        )
+    }
 
     fun alert(context: Context, title: String, body: String) = post(
         context,

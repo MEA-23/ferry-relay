@@ -73,15 +73,15 @@ struct PrivacyCover: View {
 }
 
 private struct LinkBox: Identifiable {
-    let link: PairingLink
+    let link: ScannedCode
     var id: String { link.code }
 }
 
-/// Shown when a `ferry://pair` link is opened from outside the app.
+/// Shown when a pairing link is opened from outside the app.
 private struct JoinConfirmView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    let link: PairingLink
+    let link: ScannedCode
     @State private var busy = false
 
     var body: some View {

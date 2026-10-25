@@ -375,3 +375,73 @@ struct TextToolsTests {
         #expect(!TextTools.isRTL(""))
     }
 }
+
+/// Same cases as android/app/src/test/.../FiltersTest.kt, so both platforms score alike.
+struct FiltersTests {
+    @Test func tokensAreNormalizedWordsAndPairs() {
+        #expect(Filters.tokens("BIG sale!") == ["big", "sale", "big sale"])
+        // Numbers alone and single letters are dropped; words keep their order for pairs.
+        #expect(Filters.tokens("50off 50 a now") == ["50off", "now", "50off now"])
+        #expect(Filters.tokens("عَرْض خاص") == ["عرض", "خاص", "عرض خاص"])
+    }
+
+    @Test func targets() {
+        #expect(Filters.target("p:dev1:+2010") == Filters.Target(kind: Filters.sender, value: "+2010"))
+        #expect(Filters.target("n:dev1:com.whatsapp") == Filters.Target(kind: Filters.app, value: "com.whatsapp"))
+        #expect(Filters.target("x:dev1") == nil)
+    }
+
+    @Test func signals() {
+        #expect(Filters.signals(sender: "amazon", body: "Deals today. Reply STOP to opt out") == 5)
+        #expect(Filters.signals(sender: "12345", body: "50% off at https://shop.example") == 3)
+        #expect(Filters.signals(sender: "+201001234567", body: "لإلغاء الاشتراك أرسل ٠") == 4)
+        #expect(Filters.signals(sender: "+201001234567", body: "See you at 5?") == 0)
+    }
+
+    @Test func codes() {
+        #expect(Filters.looksLikeCode("Your verification code is 482913"))
+        #expect(Filters.looksLikeCode("رمز التحقق الخاص بك ٤٨٢٩"))
+        #expect(!Filters.looksLikeCode("Code word: banana"))
+        #expect(!Filters.looksLikeCode("Order 123456 shipped"))
+        #expect(!Filters.looksLikeCode("Shopping week: 1000 deals"))
+    }
+
+    @Test func learnedNeedsExamplesOfBoth() {
+        let counts: [String: (spam: Int, ham: Int)] = ["sale": (3, 0), "hi": (0, 5)]
+        #expect(Filters.learned(["sale"], model: .init(spamDocs: 1, hamDocs: 5, counts: counts)) == 0)
+        #expect(Filters.learned(["sale"], model: .init(spamDocs: 3, hamDocs: 1, counts: counts)) == 0)
+    }
+
+    @Test func learnedScores() {
+        let model = Filters.Model(spamDocs: 3, hamDocs: 5, counts: ["sale": (3, 0), "hi": (0, 5), "today": (2, 2), "rare": (1, 0)])
+        // ln(4/5) - ln(1/7) = 1.7228, capped at 1.5; ln(1/5) - ln(6/7) = -1.4553; unseen words count for nothing.
+        #expect(abs(Filters.learned(["sale"], model: model) - 1.5) < 1e-9)
+        #expect(abs(Filters.learned(["hi"], model: model) + 1.4553) < 1e-4)
+        #expect(abs(Filters.learned(["sale", "hi", "today", "zebra"], model: model) - (1.5 - 1.4553 + 0.3365)) < 1e-3)
+        // Used by only one muted sender: not evidence of marketing.
+        #expect(Filters.learned(["rare"], model: model) == 0)
+    }
+
+    @Test func nameLinkAndPercentAloneDontSuggest() {
+        #expect(Filters.score(sender: "bank", body: "Pay 10% less at https://bank.example", model: .empty) < Filters.suggest)
+        #expect(Filters.score(sender: "+201001234567", body: "Reply STOP to opt out", model: .empty) >= Filters.suggest)
+    }
+
+    @Test func learnedIsClamped() {
+        var counts = [String: (spam: Int, ham: Int)]()
+        for i in 1...20 { counts["w\(i)"] = (10, 0) }
+        #expect(Filters.learned(Set(counts.keys), model: .init(spamDocs: 10, hamDocs: 10, counts: counts)) == 6)
+    }
+
+    @Test func words() {
+        #expect(Filters.matchesWord("BIG Sale today", words: [TextTools.normalize("sale")]))
+        #expect(Filters.matchesWord("خصم خاص", words: [TextTools.normalize("خَصم")]))
+        #expect(!Filters.matchesWord("hello", words: []))
+    }
+
+    @Test func suggestions() {
+        let model = Filters.Model(spamDocs: 3, hamDocs: 5, counts: ["sale": (3, 0), "big sale": (2, 0), "hi": (2, 1), "go": (3, 0), "off": (1, 0)])
+        #expect(Filters.suggestions(model, excluding: []) == ["sale", "big sale"])
+        #expect(Filters.suggestions(model, excluding: ["sale"]) == ["big sale"])
+    }
+}

@@ -2,6 +2,7 @@ package tech.thedevlab.ferry.data
 
 import android.content.Context
 import androidx.room.AutoMigration
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
@@ -215,14 +216,37 @@ data class Message(
     val status: String? = null,
     /** The SIM it came in on, so a reply goes out on the same one. */
     val subscriptionId: Int? = null,
+    /** Arrived without sound or a banner, and doesn't count towards the badge: see [Filters]. */
+    @ColumnInfo(defaultValue = "0") val muted: Boolean = false,
+    /** Looked like marketing when last scored; the inbox offers to mute its sender. */
+    @ColumnInfo(defaultValue = "0") val suspect: Boolean = false,
 )
+
+/**
+ * A mute rule or a decision about one, on this phone only: a muted sender (its normalized number)
+ * or app (its package), a muted word, a sender kept as not marketing, or a suggestion turned down.
+ * [kind] is one of the [Filters] kinds.
+ */
+@Entity(tableName = "mutes", primaryKeys = ["kind", "value"])
+data class Mute(val kind: String, val value: String, val label: String, val at: Long)
+
+/**
+ * How many muted senders ([spam]) and wanted conversations ([ham]) used each word, rebuilt from
+ * the inbox whenever the rules change. The row with an empty token holds the document totals.
+ */
+@Entity(tableName = "filter_words")
+data class FilterWord(@PrimaryKey val token: String, val spam: Int, val ham: Int)
+
+/** A conversation moved out of the inbox. A new message that isn't muted brings it back. */
+@Entity(tableName = "archived")
+data class Archived(@PrimaryKey val threadKey: String, val at: Long)
 
 /** Event ids already handled, so push and pull never show the same event twice (§3.4, §7.3). */
 @Entity(tableName = "seen")
 data class Seen(@PrimaryKey val id: String, val at: Long)
 
-/** A thread's newest message and its unread count. */
-data class ThreadSummary(@Embedded val last: Message, val unreadCount: Int)
+/** A thread's newest message, its unread count, and whether it's archived. */
+data class ThreadSummary(@Embedded val last: Message, val unreadCount: Int, val archived: Boolean = false)
 
 @Dao
 abstract class MessageDao {
@@ -267,9 +291,10 @@ abstract class MessageDao {
 
     @Query(
         """
-        SELECT m.*, t.unreadCount FROM messages m
+        SELECT m.*, t.unreadCount, a.threadKey IS NOT NULL AS archived FROM messages m
         JOIN (SELECT threadKey AS tk, MAX(occurredAt) AS lastAt, SUM(unread) AS unreadCount FROM messages GROUP BY threadKey) t
           ON m.threadKey = t.tk AND m.occurredAt = t.lastAt
+        LEFT JOIN archived a ON a.threadKey = m.threadKey
         GROUP BY m.threadKey
         ORDER BY m.occurredAt DESC
         """,
@@ -283,7 +308,8 @@ abstract class MessageDao {
     @Query("SELECT * FROM messages WHERE searchText LIKE :pattern ESCAPE '\\' ORDER BY occurredAt DESC LIMIT :limit")
     abstract fun search(pattern: String, limit: Int): Flow<List<Message>>
 
-    @Query("SELECT COUNT(*) FROM messages WHERE unread = 1")
+    /** The badge: unread messages that weren't muted, outside archived conversations. */
+    @Query("SELECT COUNT(*) FROM messages WHERE unread = 1 AND muted = 0 AND threadKey NOT IN (SELECT threadKey FROM archived)")
     abstract fun unreadCount(): Flow<Int>
 
     @Query("UPDATE messages SET unread = 0 WHERE threadKey = :threadKey AND unread = 1")
@@ -291,6 +317,25 @@ abstract class MessageDao {
 
     @Query("DELETE FROM messages WHERE threadKey = :threadKey")
     abstract suspend fun deleteThread(threadKey: String)
+
+    @Query("SELECT DISTINCT threadKey FROM messages")
+    abstract suspend fun threadKeys(): List<String>
+
+    @Query("UPDATE messages SET muted = :muted, suspect = 0 WHERE threadKey IN (:threadKeys)")
+    abstract suspend fun setMuted(threadKeys: List<String>, muted: Boolean)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE threadKey = :threadKey AND outgoing = 1)")
+    abstract suspend fun hasOutgoing(threadKey: String): Boolean
+
+    /** Every text, newest first, for learning from mutes. */
+    @Query("SELECT * FROM messages WHERE type = 'sms' ORDER BY occurredAt DESC")
+    abstract suspend fun texts(): List<Message>
+
+    @Query("UPDATE messages SET suspect = 0 WHERE suspect = 1")
+    abstract suspend fun clearSuspects()
+
+    @Query("UPDATE messages SET suspect = 1 WHERE rowKey IN (:rowKeys)")
+    abstract suspend fun markSuspects(rowKeys: List<String>)
 
     /** The newest text on this thread, sent or received, whose SIM a reply goes out on (§6.6). */
     @Query("SELECT * FROM messages WHERE threadKey = :threadKey AND type = 'sms' ORDER BY occurredAt DESC LIMIT 1")
@@ -311,6 +356,45 @@ abstract class MessageDao {
 }
 
 @Dao
+interface MuteDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(mute: Mute)
+
+    @Query("DELETE FROM mutes WHERE kind = :kind AND value = :value")
+    suspend fun delete(kind: String, value: String)
+
+    @Query("SELECT * FROM mutes ORDER BY at DESC")
+    suspend fun list(): List<Mute>
+
+    @Query("SELECT * FROM mutes ORDER BY at DESC")
+    fun all(): Flow<List<Mute>>
+}
+
+@Dao
+interface FilterWordDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(words: List<FilterWord>)
+
+    @Query("DELETE FROM filter_words")
+    suspend fun clear()
+
+    @Query("SELECT * FROM filter_words WHERE token IN (:tokens)")
+    suspend fun find(tokens: List<String>): List<FilterWord>
+
+    @Query("SELECT * FROM filter_words")
+    suspend fun all(): List<FilterWord>
+}
+
+@Dao
+interface ArchivedDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(item: Archived)
+
+    @Query("DELETE FROM archived WHERE threadKey = :threadKey")
+    suspend fun delete(threadKey: String)
+}
+
+@Dao
 interface SeenDao {
     /** Returns -1 if the id was already seen. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -326,10 +410,10 @@ interface SeenDao {
 @Database(
     entities = [
         OutboxItem::class, Activity::class, Message::class, Seen::class, PendingEvent::class, HeldEvent::class,
-        SentSms::class, KnownNumber::class,
+        SentSms::class, KnownNumber::class, Mute::class, FilterWord::class, Archived::class,
     ],
-    version = 3,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    version = 4,
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
 )
 abstract class FerryDb : RoomDatabase() {
     abstract fun outbox(): OutboxDao
@@ -340,6 +424,9 @@ abstract class FerryDb : RoomDatabase() {
     abstract fun activity(): ActivityDao
     abstract fun messages(): MessageDao
     abstract fun seen(): SeenDao
+    abstract fun mutes(): MuteDao
+    abstract fun filterWords(): FilterWordDao
+    abstract fun archived(): ArchivedDao
 }
 
 private const val DB_NAME = "ferry.db"

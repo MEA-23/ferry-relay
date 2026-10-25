@@ -13,6 +13,7 @@ import tech.thedevlab.ferry.net.Api
 import tech.thedevlab.ferry.push.Fcm
 import tech.thedevlab.ferry.push.Push
 import tech.thedevlab.ferry.relay.Devices
+import tech.thedevlab.ferry.relay.Muting
 import tech.thedevlab.ferry.relay.Receiver
 import tech.thedevlab.ferry.relay.Relay
 import tech.thedevlab.ferry.service.RelayService
@@ -35,7 +36,8 @@ class Graph(context: Context) {
     val store = Store(context)
     val db: FerryDb = openFerryDb(context, store)
     val relay = Relay(context, store, db)
-    val receiver = Receiver(db, relay)
+    val muting = Muting(db, store)
+    val receiver = Receiver(db, relay, muting)
     val devices = Devices(store)
 
     fun api(serverUrl: String = store.serverUrl ?: error("not set up")) = Api(serverUrl) { store.deviceToken }

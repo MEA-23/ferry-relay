@@ -9,7 +9,7 @@ public struct UnknownNodeError: Error {
 /// Notification Service Extension so both handle an event identically.
 public struct Receiver: Sendable {
     public enum Outcome: Sendable {
-        /// A new event worth showing, with its notification text.
+        /// A new event worth showing, with its notification text: a quiet one when `Message.muted`.
         case new(Message, Summary)
         /// Filed in the inbox as already read, without a notification: sent texts and imported history (§4.2).
         case filed(Message)
@@ -57,14 +57,18 @@ public struct Receiver: Sendable {
         let quiet = if case .sms(let s) = event { s.isQuiet } else { false }
         // A text sent through a node (§6.6) starts out as sending; its sms_status events move it on.
         let sent = if case .sms(let s) = event { s.commandId != nil } else { false }
-        let message = Message(
+        var message = Message(
             id: e.id, eventId: e.id, sourceDeviceId: e.sourceDeviceId, type: event.type,
             threadKey: Self.threadKey(event, source: e.sourceDeviceId), title: summary.title, body: summary.body,
             simSlot: event.sim?.slot, occurredAt: event.occurredAt, receivedAt: e.receivedAt, unread: !quiet, event: event,
             status: sent ? "sending" : nil
         )
+        if !quiet { (message.muted, message.suspect) = try inbox.judge(event, threadKey: message.threadKey) }
         try inbox.insert(message, mergeKey: Self.mergeKey(event, source: e.sourceDeviceId), payload: plain)
-        return quiet ? .filed(message) : .new(message, summary)
+        if quiet { return .filed(message) }
+        // Something worth hearing about brings an archived conversation back.
+        if !message.muted { try inbox.unarchive(message.threadKey) }
+        return .new(message, summary)
     }
 
     /// UMK events as in v1; a node's events with the root shared with that node (§3.7).
@@ -114,7 +118,7 @@ public struct Receiver: Sendable {
         return nil
     }
 
-    private static func normalize(_ number: String) -> String {
+    static func normalize(_ number: String) -> String {
         number.filter { !" -().".contains($0) }.lowercased()
     }
 }

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -165,6 +167,9 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
     }
 
     val last = messages.lastOrNull()
+    val mutes by vm.mutes.collectAsStateWithLifecycle()
+    val threads by vm.threads.collectAsStateWithLifecycle()
+    val archived = threads.any { it.last.threadKey == target.key && it.archived }
     var menu by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -192,6 +197,12 @@ fun ThreadScreen(vm: AppViewModel, target: ThreadTarget, onBack: () -> Unit, mod
                                 context.startActivity(Intent(Intent.ACTION_DIAL, "tel:${number.filter { it in "+0123456789" }}".toUri()))
                             }, leadingIcon = { Icon(Icons.Default.Call, null) })
                         }
+                        MuteMenuItem(vm, target.key, last?.threadTitle.orEmpty(), vm.isMuted(target.key, mutes)) { menu = false }
+                        DropdownMenuItem({ Text(if (archived) "Unarchive" else "Archive") }, {
+                            menu = false
+                            vm.archive(target.key, !archived)
+                            if (!archived) onBack()
+                        }, leadingIcon = { Icon(if (archived) Icons.Default.Unarchive else Icons.Default.Archive, null) })
                         DropdownMenuItem({ Text("Delete conversation") }, {
                             menu = false
                             confirmDelete = true

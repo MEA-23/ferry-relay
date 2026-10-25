@@ -43,6 +43,10 @@ struct ThreadView: View {
     @State private var current = -1
     /// Hidden until scrolled to where it opens, so it never flashes the oldest messages first.
     @State private var positioned = false
+    @State private var confirmDelete = false
+    @Environment(\.dismiss) private var dismiss
+
+    private var archived: Bool { model.threads.contains { $0.threadKey == route.threadKey && $0.archived } }
 
     init(route: ThreadRoute) {
         self.route = route
@@ -159,18 +163,32 @@ struct ThreadView: View {
                     searchFocused = true
                 }
             }
-            if let number = phoneNumber, TextTools.acceptsReplies(number) {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if let number = phoneNumber, TextTools.acceptsReplies(number) {
                         Button("Copy number", systemImage: "doc.on.doc") { UIPasteboard.general.string = number }
                         if let url = URL(string: "tel:\(number.filter { "+0123456789".contains($0) })") {
                             Link(destination: url) { Label("Call from this iPhone", systemImage: "phone") }
                         }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
+                    MuteButton(threadKey: route.threadKey, label: messages.last?.title ?? "")
+                    Button(archived ? "Unarchive" : "Archive", systemImage: archived ? "tray.and.arrow.up" : "archivebox") {
+                        model.archive(route.threadKey, !archived)
+                        if !archived { dismiss() }
+                    }
+                    Button("Delete conversation", systemImage: "trash", role: .destructive) { confirmDelete = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
             }
+        }
+        .confirmationDialog("Delete conversation?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                model.delete(route.threadKey)
+                dismiss()
+            }
+        } message: {
+            Text("Removes it from this iPhone only. The original messages stay on the phone they came from.")
         }
         .onChange(of: model.threads) { reload() }
     }

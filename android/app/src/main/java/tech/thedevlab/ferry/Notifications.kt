@@ -15,6 +15,7 @@ import tech.thedevlab.ferry.ui.MainActivity
 object Notifications {
     const val CHANNEL_RELAY = "relay"
     const val CHANNEL_INCOMING = "incoming"
+    const val CHANNEL_MUTED = "muted"
     const val CHANNEL_ALERTS = "alerts"
     const val CHANNEL_DEVICES = "devices"
     const val ID_RELAY = 1
@@ -35,6 +36,7 @@ object Notifications {
             listOf(
                 channel(CHANNEL_RELAY, "Relay status", NotificationManagerCompat.IMPORTANCE_LOW, "Shown while Ferry relays this phone's messages"),
                 channel(CHANNEL_INCOMING, "Relayed messages", NotificationManagerCompat.IMPORTANCE_HIGH, "Messages received from your other phones"),
+                channel(CHANNEL_MUTED, "Muted messages", NotificationManagerCompat.IMPORTANCE_LOW, "Messages from senders and apps you muted"),
                 channel(CHANNEL_ALERTS, "Problems", NotificationManagerCompat.IMPORTANCE_DEFAULT),
                 channel(CHANNEL_DEVICES, "New devices", NotificationManagerCompat.IMPORTANCE_HIGH, "A relaying phone added another phone to your account"),
             ),
@@ -60,11 +62,14 @@ object Notifications {
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
 
-    /** A received message. Tagged with its thread so opening the thread clears it; tapping opens the thread. */
+    /**
+     * A received message. Tagged with its thread so opening the thread clears it; tapping opens the
+     * thread. A muted one goes to its own low-importance channel: no sound, no banner.
+     */
     fun message(context: Context, m: Message, sourceName: String?) = post(
         context,
         m.eventId.hashCode(),
-        NotificationCompat.Builder(context, CHANNEL_INCOMING)
+        NotificationCompat.Builder(context, if (m.muted) CHANNEL_MUTED else CHANNEL_INCOMING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(m.title)
             .setContentText(m.body)
@@ -75,7 +80,7 @@ object Notifications {
             .setGroup(m.threadKey)
             .setCategory(if (m.type == "call") NotificationCompat.CATEGORY_MISSED_CALL else NotificationCompat.CATEGORY_MESSAGE)
             // Relayed app notifications arrive quietly, as on iOS.
-            .setSilent(m.type == "notification")
+            .setSilent(m.type == "notification" || m.muted)
             .setAutoCancel(true)
             .setContentIntent(openApp(context, m.threadKey))
             .build(),

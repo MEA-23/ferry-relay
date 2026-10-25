@@ -16,6 +16,10 @@ public struct Message: Identifiable, Hashable, Sendable {
     public let event: FerryEvent?
     /// A text sent from a receiver through a node (§6.6): sending · sent · delivered · failed:<reason>.
     public var status: String? = nil
+    /// Arrived without sound or a banner, and doesn't count towards the badge: see `Filters`.
+    public var muted = false
+    /// Looked like marketing when last scored; the inbox offers to mute its sender.
+    public var suspect = false
 
     public var date: Date { Date(timeIntervalSince1970: TimeInterval(occurredAt) / 1000) }
 
@@ -28,6 +32,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
     public let threadKey: String
     public let last: Message
     public let unreadCount: Int
+    /// Unread messages that weren't muted: what the badge counts.
+    public let loudUnreadCount: Int
+    public let archived: Bool
 }
 
 /// Cached device list with decrypted profiles, so the extension can name devices and SIMs offline.
@@ -76,7 +83,7 @@ public struct Inbox: Sendable {
         self.url = url
     }
 
-    private func open() throws -> SQLite {
+    func open() throws -> SQLite {
         guard let key = Keychain.inboxKey() else {
             throw SQLite.SQLiteError(description: "The inbox is locked until this iPhone is unlocked once after restarting.")
         }
@@ -106,6 +113,9 @@ public struct Inbox: Sendable {
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS held (id TEXT PRIMARY KEY, payload BLOB NOT NULL, received_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS introductions (event_id TEXT PRIMARY KEY, by_device TEXT NOT NULL, device_id TEXT NOT NULL, node_pk TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS mutes (kind TEXT NOT NULL, value TEXT NOT NULL, label TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (kind, value));
+            CREATE TABLE IF NOT EXISTS filter_words (token TEXT PRIMARY KEY, spam INTEGER NOT NULL, ham INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS archived (thread_key TEXT PRIMARY KEY, at INTEGER NOT NULL);
             """)
         try migrate(db)
         return db
@@ -113,9 +123,10 @@ public struct Inbox: Sendable {
 
     /// Version 1 adds `search_text`, the normalized body that search matches against, and fills it in.
     /// Version 2 adds `status`, for texts sent through a node (§6.6).
+    /// Version 3 adds `muted` and `suspect` (see `Filters`), and `outgoing`, filled in from each text's payload.
     private func migrate(_ db: SQLite) throws {
         let version = try db.query("PRAGMA user_version").first?.int("user_version") ?? 0
-        guard version < 2 else { return }
+        guard version < 3 else { return }
         try db.transaction {
             // The app and the extension may both get here; whichever is second finds the column there.
             let columns = try db.query("PRAGMA table_info(messages)").compactMap { $0.text("name") }
@@ -124,7 +135,16 @@ public struct Inbox: Sendable {
                 try db.run("UPDATE messages SET search_text = ? WHERE row_key = ?", [.text(TextTools.normalize(r.text("body") ?? "")), .text(r.text("row_key"))])
             }
             if !columns.contains("status") { try db.exec("ALTER TABLE messages ADD COLUMN status TEXT") }
-            try db.exec("PRAGMA user_version = 2")
+            if !columns.contains("muted") { try db.exec("ALTER TABLE messages ADD COLUMN muted INTEGER NOT NULL DEFAULT 0") }
+            if !columns.contains("suspect") { try db.exec("ALTER TABLE messages ADD COLUMN suspect INTEGER NOT NULL DEFAULT 0") }
+            if !columns.contains("outgoing") {
+                try db.exec("ALTER TABLE messages ADD COLUMN outgoing INTEGER NOT NULL DEFAULT 0")
+                for r in try db.query("SELECT row_key, payload FROM messages WHERE type = 'sms'") {
+                    guard let data = r.blob("payload"), case .sms(let e) = try? FerryEvent.decode(data), e.isOutgoing else { continue }
+                    try db.run("UPDATE messages SET outgoing = 1 WHERE row_key = ?", [.text(r.text("row_key"))])
+                }
+            }
+            try db.exec("PRAGMA user_version = 3")
         }
     }
 
@@ -157,12 +177,13 @@ public struct Inbox: Sendable {
             try db.run(
                 """
                 INSERT OR REPLACE INTO messages
-                  (row_key, event_id, source_device_id, type, thread_key, title, body, sim_slot, occurred_at, received_at, unread, payload, search_text, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  (row_key, event_id, source_device_id, type, thread_key, title, body, sim_slot, occurred_at, received_at, unread, payload, search_text, status,
+                   muted, suspect, outgoing)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [.text(rowKey), .text(m.eventId), .text(m.sourceDeviceId), .text(m.type), .text(m.threadKey), .text(m.title),
                  .text(m.body), .int(m.simSlot), .int(m.occurredAt), .int(m.receivedAt), .int(m.unread ? 1 : 0), .blob(payload),
-                 .text(TextTools.normalize(m.body)), .text(status)]
+                 .text(TextTools.normalize(m.body)), .text(status), .int(m.muted ? 1 : 0), .int(m.suspect ? 1 : 0), .int(m.isOutgoing ? 1 : 0)]
             )
         }
     }
@@ -189,13 +210,20 @@ public struct Inbox: Sendable {
 
     public func threads() throws -> [ThreadSummary] {
         let rows = try open().query("""
-            SELECT m.*, t.unread_count FROM messages m
-            JOIN (SELECT thread_key, MAX(occurred_at) AS last_at, SUM(unread) AS unread_count FROM messages GROUP BY thread_key) t
+            SELECT m.*, t.unread_count, t.loud_unread, a.thread_key IS NOT NULL AS archived FROM messages m
+            JOIN (SELECT thread_key, MAX(occurred_at) AS last_at, SUM(unread) AS unread_count, SUM(unread AND NOT muted) AS loud_unread
+                  FROM messages GROUP BY thread_key) t
               ON m.thread_key = t.thread_key AND m.occurred_at = t.last_at
+            LEFT JOIN archived a ON a.thread_key = m.thread_key
             GROUP BY m.thread_key
             ORDER BY m.occurred_at DESC
             """)
-        return rows.map { ThreadSummary(threadKey: $0.text("thread_key")!, last: message($0), unreadCount: Int($0.int("unread_count") ?? 0)) }
+        return rows.map {
+            ThreadSummary(
+                threadKey: $0.text("thread_key")!, last: message($0), unreadCount: Int($0.int("unread_count") ?? 0),
+                loudUnreadCount: Int($0.int("loud_unread") ?? 0), archived: $0.int("archived") == 1
+            )
+        }
     }
 
     public func messages(thread: String) throws -> [Message] {
@@ -222,8 +250,11 @@ public struct Inbox: Sendable {
         try open().run("DELETE FROM messages WHERE thread_key = ?", [.text(thread)])
     }
 
+    /// The badge: unread messages that weren't muted, outside archived conversations.
     public func unreadCount() throws -> Int {
-        Int(try open().query("SELECT COUNT(*) AS n FROM messages WHERE unread = 1").first?.int("n") ?? 0)
+        Int(try open().query(
+            "SELECT COUNT(*) AS n FROM messages WHERE unread = 1 AND muted = 0 AND thread_key NOT IN (SELECT thread_key FROM archived)"
+        ).first?.int("n") ?? 0)
     }
 
     private func message(_ r: SQLite.Row) -> Message {
@@ -231,7 +262,8 @@ public struct Inbox: Sendable {
             id: r.text("row_key")!, eventId: r.text("event_id")!, sourceDeviceId: r.text("source_device_id")!,
             type: r.text("type")!, threadKey: r.text("thread_key")!, title: r.text("title")!, body: r.text("body")!,
             simSlot: r.int("sim_slot").map(Int.init), occurredAt: r.int("occurred_at")!, receivedAt: r.int("received_at")!,
-            unread: r.int("unread") == 1, event: r.blob("payload").flatMap { try? FerryEvent.decode($0) }, status: r.text("status")
+            unread: r.int("unread") == 1, event: r.blob("payload").flatMap { try? FerryEvent.decode($0) }, status: r.text("status"),
+            muted: r.int("muted") == 1, suspect: r.int("suspect") == 1
         )
     }
 

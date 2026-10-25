@@ -27,6 +27,12 @@ final class NotificationService: UNNotificationServiceExtension {
                     content.threadIdentifier = message.threadKey
                     content.userInfo["thread"] = message.threadKey
                     if message.type == "notification" { content.sound = nil }
+                    if message.muted {
+                        // Muted: into Notification Center without sound, a banner, or lighting the screen.
+                        content.sound = nil
+                        content.interruptionLevel = .passive
+                        content.userInfo["muted"] = true
+                    }
                 case .introduced(let deviceId, let summary):
                     // A node added a node (§4.7): say so, with a Remove button.
                     content.title = summary.title

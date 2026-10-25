@@ -24,7 +24,10 @@ import tech.thedevlab.ferry.capture.SmsHistory
 import tech.thedevlab.ferry.relay.HistoryImportWorker
 import tech.thedevlab.ferry.BuildConfig
 import tech.thedevlab.ferry.Notifications
+import tech.thedevlab.ferry.data.Archived
+import tech.thedevlab.ferry.data.Filters
 import tech.thedevlab.ferry.data.MessageDao
+import tech.thedevlab.ferry.data.Mute
 import tech.thedevlab.ferry.capture.Sims
 import tech.thedevlab.ferry.crypto.FerryCrypto
 import tech.thedevlab.ferry.data.Role
@@ -187,6 +190,68 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Notifications.clearThread(getApplication(), threadKey)
     }
 
+    fun archive(threadKey: String, archived: Boolean) {
+        viewModelScope.launch {
+            if (archived) g.db.archived().insert(Archived(threadKey, System.currentTimeMillis())) else g.db.archived().delete(threadKey)
+        }
+        if (archived) Notifications.clearThread(getApplication(), threadKey)
+    }
+
+    // ── muting ───────────────────────────────────────────────────────────────
+
+    val mutes = g.db.mutes().all().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun isMuted(threadKey: String, mutes: List<Mute>): Boolean {
+        val target = Filters.target(threadKey) ?: return false
+        return mutes.any { it.kind == target.kind && it.value == target.value }
+    }
+
+    /** Mutes [threadKey]'s sender or app, wherever it appears. */
+    fun mute(threadKey: String, label: String) {
+        viewModelScope.launch {
+            g.muting.mute(threadKey, label)
+            clearNotifications(Filters.target(threadKey))
+        }
+    }
+
+    fun unmute(target: Filters.Target) {
+        viewModelScope.launch { g.muting.unmute(target) }
+    }
+
+    /** The "Mute?" suggestion was wrong: this sender isn't marketing. */
+    fun keep(threadKey: String, label: String) {
+        viewModelScope.launch { g.muting.keep(threadKey, label) }
+    }
+
+    fun addMutedWord(word: String) {
+        viewModelScope.launch {
+            g.muting.addWord(word)
+            loadSuggestions()
+        }
+    }
+
+    fun removeMutedWord(value: String) {
+        viewModelScope.launch { g.muting.removeWord(value) }
+    }
+
+    fun skipSuggestion(value: String) {
+        viewModelScope.launch {
+            g.muting.skipWord(value)
+            loadSuggestions()
+        }
+    }
+
+    /** Words learned from muted senders, offered as rules. */
+    val suggestedWords = MutableStateFlow<List<String>>(emptyList())
+
+    fun loadSuggestions() {
+        viewModelScope.launch { suggestedWords.value = g.muting.suggestions() }
+    }
+
+    private suspend fun clearNotifications(target: Filters.Target?) {
+        g.db.messages().threadKeys().filter { Filters.target(it) == target }.forEach { Notifications.clearThread(getApplication(), it) }
+    }
+
     /** "Work SIM · Pixel 8" for a received message, from the source's encrypted profile. */
     fun origin(sourceDeviceId: String, simSlot: Int?): String {
         val device = store.deviceNames[sourceDeviceId] ?: "Android phone"
@@ -196,6 +261,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         // Names and SIM labels of the phones messages come from; quietly, as the inbox works without them.
         if (store.has(Role.RECEIVER)) viewModelScope.launch { runCatching { loadDevices() } }
+        // What counts as wanted grows with the inbox; relearn once per launch.
+        if (store.has(Role.RECEIVER)) viewModelScope.launch(Dispatchers.IO) { runCatching { g.muting.relearn() } }
     }
 
     val busy = MutableStateFlow(false)

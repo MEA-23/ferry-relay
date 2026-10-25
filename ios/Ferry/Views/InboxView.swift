@@ -3,7 +3,7 @@ import SwiftUI
 
 struct InboxView: View {
     private enum Filter: String, CaseIterable, Identifiable {
-        case all = "All", texts = "Texts", calls = "Calls", apps = "Apps"
+        case all = "All", texts = "Texts", calls = "Calls", apps = "Apps", archived = "Archived"
         var id: Self { self }
     }
 
@@ -23,10 +23,11 @@ struct InboxView: View {
     private var visible: [ThreadSummary] {
         model.threads.filter { t in
             switch filter {
-            case .all: true
-            case .texts: t.last.type == "sms"
-            case .calls: t.last.type == "call"
-            case .apps: t.last.type == "notification"
+            case .all: !t.archived
+            case .texts: !t.archived && t.last.type == "sms"
+            case .calls: !t.archived && t.last.type == "call"
+            case .apps: !t.archived && t.last.type == "notification"
+            case .archived: t.archived
             }
         }
     }
@@ -109,12 +110,26 @@ struct InboxView: View {
             ThreadRow(thread: thread, source: model.devices.first { $0.id == thread.last.sourceDeviceId }, query: query)
         }
         .swipeActions {
-            Button("Delete", systemImage: "trash", role: .destructive) { model.delete(thread.threadKey) }
+            if thread.archived {
+                Button("Unarchive", systemImage: "tray.and.arrow.up") { model.archive(thread.threadKey, false) }.tint(.indigo)
+            } else {
+                Button("Archive", systemImage: "archivebox") { model.archive(thread.threadKey, true) }.tint(.indigo)
+            }
         }
         .swipeActions(edge: .leading) {
             if thread.unreadCount > 0 {
                 Button("Mark read", systemImage: "envelope.open") { model.markRead(thread.threadKey) }.tint(.ferryAccent)
             }
+        }
+        .contextMenu {
+            if thread.unreadCount > 0 {
+                Button("Mark as read", systemImage: "envelope.open") { model.markRead(thread.threadKey) }
+            }
+            Button(thread.archived ? "Unarchive" : "Archive", systemImage: thread.archived ? "tray.and.arrow.up" : "archivebox") {
+                model.archive(thread.threadKey, !thread.archived)
+            }
+            MuteButton(threadKey: thread.threadKey, label: thread.last.title)
+            Button("Delete conversation", systemImage: "trash", role: .destructive) { model.delete(thread.threadKey) }
         }
     }
 
@@ -157,6 +172,8 @@ struct InboxView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+        } else if filter == .archived {
+            ContentUnavailableView("Nothing archived", systemImage: "archivebox", description: Text("Swipe a conversation to archive it."))
         } else if filter != .all {
             ContentUnavailableView("No \(filter.rawValue.lowercased()) yet", systemImage: "line.3.horizontal.decrease.circle", description: Text("Nothing matches this filter."))
         } else {
@@ -167,22 +184,39 @@ struct InboxView: View {
 
 
 struct ThreadRow: View {
+    @Environment(AppModel.self) private var model
     let thread: ThreadSummary
     let source: DeviceRecord?
     var query = ""
 
     var body: some View {
+        let muted = model.isMuted(thread.threadKey)
         HStack(alignment: .top, spacing: 12) {
             KindIcon(type: thread.last.type)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(Highlight.text(thread.last.title, query: query)).font(.headline).lineLimit(1)
                     Spacer()
+                    if muted {
+                        Image(systemName: "bell.slash.fill").font(.caption2).foregroundStyle(.secondary).accessibilityLabel("Muted")
+                    }
                     Text(thread.last.date, format: .relativeShort).font(.caption).foregroundStyle(.secondary)
                 }
                 Text(thread.last.isOutgoing ? "You: \(thread.last.body)" : thread.last.body).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
                 if let label = sourceLabel {
                     Text(label).font(.caption2.weight(.medium)).foregroundStyle(.ferryAccent)
+                }
+                if model.suggestMuting && thread.last.suspect && !muted {
+                    HStack {
+                        Text("Mute this sender?").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        // Borderless, so tapping them doesn't also open the conversation.
+                        Button("Keep") { model.keep(thread.threadKey, label: thread.last.title) }
+                        Button("Mute") { model.mute(thread.threadKey, label: thread.last.title) }.fontWeight(.semibold)
+                    }
+                    .font(.subheadline)
+                    .buttonStyle(.borderless)
+                    .padding(.top, 2)
                 }
             }
             if thread.unreadCount > 0 {

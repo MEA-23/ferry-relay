@@ -16,9 +16,9 @@ import tech.thedevlab.ferry.model.StatusEvent
 import tech.thedevlab.ferry.net.StoredEvent
 
 /** Files decrypted events into the inbox. The Android counterpart of iOS `Receiver`. */
-class Receiver(private val db: FerryDb, private val relay: Relay) {
+class Receiver(private val db: FerryDb, private val relay: Relay, private val muting: Muting) {
     sealed interface Outcome {
-        /** A new message worth a notification. */
+        /** A new message worth a notification: a quiet one when [Message.muted]. */
         data class New(val message: Message) : Outcome
 
         /** Filed as read, without a notification: sent texts and imported history (§4.2). */
@@ -62,9 +62,15 @@ class Receiver(private val db: FerryDb, private val relay: Relay) {
                 db.messages().saveSent(message)
                 return@withTransaction Outcome.Filed
             }
+            val verdict = if (message.unread) muting.judge(event, message.threadKey) else Muting.Verdict.NONE
+            val filed = message.copy(muted = verdict.muted, suspect = verdict.suspect)
             when {
-                !db.messages().save(message) -> Outcome.Duplicate
-                message.unread -> Outcome.New(message)
+                !db.messages().save(filed) -> Outcome.Duplicate
+                filed.unread -> {
+                    // Something worth hearing about brings an archived conversation back.
+                    if (!filed.muted) db.archived().delete(filed.threadKey)
+                    Outcome.New(filed)
+                }
                 else -> Outcome.Filed
             }
         }

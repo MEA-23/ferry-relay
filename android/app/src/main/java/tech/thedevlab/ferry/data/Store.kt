@@ -155,6 +155,16 @@ class Store(context: Context) {
         get() = prefs.getBoolean("allowNewNumbers", false)
         set(value) = edit { putBoolean("allowNewNumbers", value) }
 
+    /** Texts that look like marketing get a "Mute?" suggestion in the inbox (see [Filters.SUGGEST]). Off by default. */
+    var suggestMuting: Boolean
+        get() = prefs.getBoolean("suggestMuting", false)
+        set(value) = edit { putBoolean("suggestMuting", value) }
+
+    /** Texts that score as marketing arrive muted, without asking (see [Filters.AUTO]). Off by default. */
+    var autoMuteMarketing: Boolean
+        get() = prefs.getBoolean("autoMuteMarketing", false)
+        set(value) = edit { putBoolean("autoMuteMarketing", value) }
+
     /** The phone and SIM the last new message went out from, as [tech.thedevlab.ferry.ui.SendOption.id]. */
     var lastSendOption: String?
         get() = prefs.getString("lastSendOption", null)

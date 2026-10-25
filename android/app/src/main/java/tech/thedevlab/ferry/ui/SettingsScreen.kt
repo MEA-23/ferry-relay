@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.NotificationsPaused
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,7 +53,7 @@ import tech.thedevlab.ferry.push.Push
 /** The receiver's settings, laid out like the iPhone app's: notifications, account, and leaving. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: AppViewModel, storeVersion: Long, modifier: Modifier = Modifier) {
+fun SettingsScreen(vm: AppViewModel, storeVersion: Long, onNavigate: (Screen) -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val store = vm.store
     // Notification settings can change outside the app; re-check on every resume and after each prompt.
@@ -99,6 +100,8 @@ fun SettingsScreen(vm: AppViewModel, storeVersion: Long, modifier: Modifier = Mo
                             }
                         }
                     }
+                    FormDivider(start = 56.dp)
+                    IconRow(Icons.Default.NotificationsPaused, "Muted", tint = MaterialTheme.colorScheme.primary) { onNavigate(Screen.Muted) }
                 }
             }
             item {

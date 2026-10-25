@@ -42,7 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import tech.thedevlab.ferry.data.Role
 
-enum class Screen { Home, Devices, Apps, Pair, History, NewMessage }
+enum class Screen { Home, Devices, Apps, Pair, History, NewMessage, Muted }
 
 /** Where the app is. Tabs aren't part of it: switching tabs is instant, moving between these slides. */
 private data class Dest(val onboarding: Boolean, val screen: Screen, val thread: ThreadTarget?, val awaitingKey: Boolean = false) {
@@ -172,7 +172,7 @@ fun FerryRoot(
                                 when (tab) {
                                     Tab.Inbox -> InboxScreen(vm, changes, onOpen = { thread = it }, onNavigate = { screen = it }, content)
                                     Tab.Devices -> DevicesScreen(vm, onBack = null, onPair = { screen = Screen.Pair }, content)
-                                    Tab.Settings -> SettingsScreen(vm, changes, content)
+                                    Tab.Settings -> SettingsScreen(vm, changes, onNavigate = { screen = it }, content)
                                     Tab.Phone -> HomeScreen(vm, changes, onNavigate = { screen = it }, content)
                                 }
                                 tabBar()
@@ -182,6 +182,7 @@ fun FerryRoot(
                     Screen.Apps -> AppsScreen(vm, onBack = { screen = Screen.Home }, modifier)
                     Screen.Pair -> PairDeviceScreen(vm, onBack = { screen = Screen.Home }, modifier)
                     Screen.History -> HistoryScreen(vm, changes, onBack = { screen = Screen.Home }, modifier)
+                    Screen.Muted -> MutedScreen(vm, changes, onBack = { screen = Screen.Home }, modifier)
                     // Back from the conversation it opens goes to the inbox, not back here.
                     Screen.NewMessage -> NewMessageScreen(vm, onBack = { screen = Screen.Home }, onSent = {
                         screen = Screen.Home

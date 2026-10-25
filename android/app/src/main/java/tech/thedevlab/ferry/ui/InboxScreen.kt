@@ -32,6 +32,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
@@ -111,6 +114,10 @@ private enum class Filter(val label: String, val type: String?) {
     Texts("Texts", "sms"),
     Calls("Calls", "call"),
     Apps("Apps", "notification"),
+    Archived("Archived", null),
+    ;
+
+    fun shows(t: ThreadSummary) = if (this == Archived) t.archived else !t.archived && (type == null || t.last.type == type)
 }
 
 /** The receiver's inbox: one row per conversation, with search across every message. */
@@ -167,7 +174,9 @@ private fun ThreadList(
     var filter by rememberSaveable { mutableStateOf(Filter.All) }
     var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val visible = threads.filter { filter.type == null || it.last.type == filter.type }
+    val visible = threads.filter(filter::shows)
+    val suggest = remember(storeVersion) { vm.store.suggestMuting }
+    val mutes by vm.mutes.collectAsStateWithLifecycle()
     // Empty until the device list loads (it always holds this phone), so unknown reads as "has phones".
     val devices by vm.devices.collectAsStateWithLifecycle()
     val noPhones = devices.isNotEmpty() && devices.none { "source" in it.roles && !it.isSelf }
@@ -199,6 +208,7 @@ private fun ThreadList(
             if (visible.isEmpty()) {
                 item(key = "empty") {
                     when {
+                        filter == Filter.Archived -> EmptyState(R.drawable.art_empty, "Nothing archived", "Swipe a conversation to archive it.", Modifier.padding(horizontal = 16.dp))
                         threads.isNotEmpty() -> EmptyState(R.drawable.art_empty, "Nothing here", "No ${filter.label.lowercase()} yet.", Modifier.padding(horizontal = 16.dp))
                         noPhones -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             EmptyState(
@@ -214,13 +224,7 @@ private fun ThreadList(
                 }
             }
             items(visible, key = { it.last.threadKey }) { t ->
-                ThreadRow(
-                    t,
-                    origin = vm.origin(t.last.sourceDeviceId, t.last.simSlot),
-                    onClick = { onOpen(ThreadTarget(t.last.threadKey)) },
-                    onMarkRead = { vm.markRead(t.last.threadKey) },
-                    onDelete = { vm.deleteThread(t.last.threadKey) },
-                )
+                ThreadRow(vm, t, vm.isMuted(t.last.threadKey, mutes), suggest, onClick = { onOpen(ThreadTarget(t.last.threadKey)) })
             }
         }
     }
@@ -230,6 +234,7 @@ private fun ThreadList(
 private fun SearchResults(vm: AppViewModel, threads: List<ThreadSummary>, query: String, onOpen: (ThreadTarget) -> Unit) {
     val messages by vm.searchResults.collectAsStateWithLifecycle()
     val conversations = remember(threads, query) { threads.filter { TextTools.matches(it.last.threadTitle, query).isNotEmpty() } }
+    val mutes by vm.mutes.collectAsStateWithLifecycle()
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         if (conversations.isEmpty() && messages.isEmpty()) {
             item {
@@ -249,14 +254,7 @@ private fun SearchResults(vm: AppViewModel, threads: List<ThreadSummary>, query:
         if (conversations.isNotEmpty()) {
             item { SectionHeader("Conversations", Modifier.padding(horizontal = 16.dp)) }
             items(conversations, key = { "c:" + it.last.threadKey }) { t ->
-                ThreadRow(
-                    t,
-                    origin = vm.origin(t.last.sourceDeviceId, t.last.simSlot),
-                    titleQuery = query,
-                    onClick = { onOpen(ThreadTarget(t.last.threadKey)) },
-                    onMarkRead = { vm.markRead(t.last.threadKey) },
-                    onDelete = { vm.deleteThread(t.last.threadKey) },
-                )
+                ThreadRow(vm, t, vm.isMuted(t.last.threadKey, mutes), suggest = false, titleQuery = query, onClick = { onOpen(ThreadTarget(t.last.threadKey)) })
             }
         }
         if (messages.isNotEmpty()) {
@@ -271,57 +269,49 @@ private fun SearchResults(vm: AppViewModel, threads: List<ThreadSummary>, query:
 // ── rows ─────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ThreadRow(
-    t: ThreadSummary,
-    origin: String,
-    onClick: () -> Unit,
-    onMarkRead: () -> Unit,
-    onDelete: () -> Unit,
-    titleQuery: String = "",
-) {
-    // Swipe from the start to mark read, from the end to delete; the long-press menu offers both too.
+private fun ThreadRow(vm: AppViewModel, t: ThreadSummary, muted: Boolean, suggest: Boolean, onClick: () -> Unit, titleQuery: String = "") {
+    // Swipe from the start to mark read, from the end to archive; the long-press menu offers both too.
     val swipe = rememberSwipeToDismissBoxState()
     val scope = rememberCoroutineScope()
+    val key = t.last.threadKey
     SwipeToDismissBox(
         swipe,
-        backgroundContent = { SwipeBackground(swipe.dismissDirection) },
+        backgroundContent = { SwipeBackground(swipe.dismissDirection, t.archived) },
         enableDismissFromStartToEnd = t.unreadCount > 0,
         onDismiss = { direction ->
             if (direction == SwipeToDismissBoxValue.EndToStart) {
-                onDelete()
+                vm.archive(key, !t.archived)
             } else {
-                onMarkRead()
+                vm.markRead(key)
                 scope.launch { swipe.reset() }
             }
         },
     ) {
-        ThreadRowContent(t, origin, titleQuery, onClick, onMarkRead, onDelete)
+        ThreadRowContent(vm, t, muted, suggest, vm.origin(t.last.sourceDeviceId, t.last.simSlot), titleQuery, onClick)
     }
 }
 
 @Composable
-private fun SwipeBackground(direction: SwipeToDismissBoxValue) {
+private fun SwipeBackground(direction: SwipeToDismissBoxValue, archived: Boolean) {
     if (direction == SwipeToDismissBoxValue.Settled) return
-    val delete = direction == SwipeToDismissBoxValue.EndToStart
+    val archive = direction == SwipeToDismissBoxValue.EndToStart
     Box(
-        Modifier.fillMaxSize().background(if (delete) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary).padding(horizontal = 24.dp),
-        contentAlignment = if (delete) Alignment.CenterEnd else Alignment.CenterStart,
+        Modifier.fillMaxSize().background(if (archive) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary).padding(horizontal = 24.dp),
+        contentAlignment = if (archive) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        Icon(if (delete) Icons.Default.Delete else Icons.Default.DoneAll, if (delete) "Delete" else "Mark as read", tint = Color.White)
+        when {
+            !archive -> Icon(Icons.Default.DoneAll, "Mark as read", tint = Color.White)
+            archived -> Icon(Icons.Default.Unarchive, "Unarchive", tint = Color.White)
+            else -> Icon(Icons.Default.Archive, "Archive", tint = Color.White)
+        }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ThreadRowContent(
-    t: ThreadSummary,
-    origin: String,
-    titleQuery: String,
-    onClick: () -> Unit,
-    onMarkRead: () -> Unit,
-    onDelete: () -> Unit,
-) {
+private fun ThreadRowContent(vm: AppViewModel, t: ThreadSummary, muted: Boolean, suggest: Boolean, origin: String, titleQuery: String, onClick: () -> Unit) {
     val m = t.last
+    val key = m.threadKey
     val unread = t.unreadCount > 0
     var menu by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
@@ -340,6 +330,9 @@ private fun ThreadRowContent(
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.size(8.dp))
+                        if (muted) {
+                            Icon(Icons.Default.NotificationsOff, "Muted", Modifier.padding(end = 4.dp).size(14.dp), tint = colors.onSurfaceVariant)
+                        }
                         Text(listTime(m.occurredAt), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
                     }
                     Text(
@@ -351,6 +344,13 @@ private fun ThreadRowContent(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(origin, style = MaterialTheme.typography.labelSmall, color = colors.primary, maxLines = 1)
+                    if (suggest && m.suspect && !muted) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Mute this sender?", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                            TextButton({ vm.keep(key, m.threadTitle) }) { Text("Keep") }
+                            TextButton({ vm.mute(key, m.threadTitle) }) { Text("Mute") }
+                        }
+                    }
                 }
                 if (unread) {
                     Box(Modifier.padding(top = 6.dp).size(9.dp).clip(CircleShape).background(colors.primary).semantics { contentDescription = "Unread" })
@@ -360,9 +360,15 @@ private fun ThreadRowContent(
         }
         DropdownMenu(menu, { menu = false }) {
             if (unread) {
-                DropdownMenuItem({ Text("Mark as read") }, { menu = false; onMarkRead() }, leadingIcon = { Icon(Icons.Default.DoneAll, null) })
+                DropdownMenuItem({ Text("Mark as read") }, { menu = false; vm.markRead(key) }, leadingIcon = { Icon(Icons.Default.DoneAll, null) })
             }
-            DropdownMenuItem({ Text("Delete conversation") }, { menu = false; onDelete() }, leadingIcon = { Icon(Icons.Default.Delete, null) })
+            if (t.archived) {
+                DropdownMenuItem({ Text("Unarchive") }, { menu = false; vm.archive(key, false) }, leadingIcon = { Icon(Icons.Default.Unarchive, null) })
+            } else {
+                DropdownMenuItem({ Text("Archive") }, { menu = false; vm.archive(key, true) }, leadingIcon = { Icon(Icons.Default.Archive, null) })
+            }
+            MuteMenuItem(vm, key, m.threadTitle, muted) { menu = false }
+            DropdownMenuItem({ Text("Delete conversation") }, { menu = false; vm.deleteThread(key) }, leadingIcon = { Icon(Icons.Default.Delete, null) })
         }
     }
 }

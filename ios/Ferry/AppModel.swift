@@ -12,6 +12,12 @@ final class AppModel {
     private(set) var threads: [ThreadSummary] = []
     private(set) var devices: [DeviceRecord] = []
     private(set) var statuses: [String: StatusEvent] = [:]
+    /// Mute rules and decisions on this iPhone (see `Filters`).
+    private(set) var mutes: [Mute] = []
+    /// Texts that look like marketing get a "Mute?" suggestion in the inbox.
+    private(set) var suggestMuting = false
+    /// Texts that score as marketing arrive muted, without asking.
+    private(set) var autoMute = false
     private(set) var syncing = false
     /// Set after a revocation wiped this iPhone, so onboarding can say why it's back at the start.
     var wasRemoved = false
@@ -48,6 +54,13 @@ final class AppModel {
         }
         account = Keychain.load()
         reloadLocal()
+        // What counts as wanted grows with the inbox; relearn once per launch.
+        if account != nil {
+            Task.detached(priority: .utility) {
+                try? Inbox.shared.relearn()
+                await MainActor.run { AppModel.shared.reloadLocal() }
+            }
+        }
     }
 
     var sources: [DeviceRecord] { devices.filter { $0.roles.contains("source") } }
@@ -56,6 +69,9 @@ final class AppModel {
         threads = (try? Inbox.shared.threads()) ?? []
         devices = (try? Inbox.shared.devices()) ?? []
         statuses = (try? Inbox.shared.statuses()) ?? [:]
+        mutes = (try? Inbox.shared.mutes()) ?? []
+        suggestMuting = Inbox.shared.suggestMuting
+        autoMute = Inbox.shared.autoMute
         updateBadge()
     }
 
@@ -165,6 +181,60 @@ final class AppModel {
 
     func delete(_ thread: String) {
         try? Inbox.shared.deleteThread(thread)
+        reloadLocal()
+    }
+
+    func archive(_ thread: String, _ archived: Bool) {
+        try? Inbox.shared.archive(thread, archived)
+        reloadLocal()
+    }
+
+    // ── muting ───────────────────────────────────────────────────────────────
+
+    func isMuted(_ thread: String) -> Bool {
+        guard let target = Filters.target(thread) else { return false }
+        return mutes.contains { $0.target == target }
+    }
+
+    /// Mutes `thread`'s sender or app, wherever it appears.
+    func mute(_ thread: String, label: String) {
+        try? Inbox.shared.mute(threadKey: thread, label: label)
+        reloadLocal()
+    }
+
+    func unmute(_ target: Filters.Target) {
+        try? Inbox.shared.unmute(target)
+        reloadLocal()
+    }
+
+    /// The "Mute?" suggestion was wrong: this sender isn't marketing.
+    func keep(_ thread: String, label: String) {
+        try? Inbox.shared.keep(threadKey: thread, label: label)
+        reloadLocal()
+    }
+
+    func setSuggestMuting(_ on: Bool) {
+        Inbox.shared.suggestMuting = on
+        suggestMuting = on
+    }
+
+    func setAutoMute(_ on: Bool) {
+        Inbox.shared.autoMute = on
+        autoMute = on
+    }
+
+    func addMutedWord(_ word: String) {
+        try? Inbox.shared.addWord(word)
+        reloadLocal()
+    }
+
+    func removeMutedWord(_ value: String) {
+        try? Inbox.shared.removeWord(value)
+        reloadLocal()
+    }
+
+    func skipSuggestion(_ value: String) {
+        try? Inbox.shared.skipWord(value)
         reloadLocal()
     }
 

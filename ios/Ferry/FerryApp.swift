@@ -50,13 +50,14 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {}
 
-    /// In the foreground, pull right away; show a banner only for what the extension decrypted.
+    /// In the foreground, pull right away; show a banner only for what the extension decrypted and didn't mute.
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         await MainActor.run {
             AppModel.shared.reloadLocal()
             Task { await AppModel.shared.refresh() }
         }
         let info = notification.request.content.userInfo
+        if info["muted"] != nil { return [.list] }
         return info["thread"] == nil && info["removeDevice"] == nil ? [] : [.banner, .list, .sound]
     }
 

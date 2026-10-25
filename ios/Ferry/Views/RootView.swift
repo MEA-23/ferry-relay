@@ -13,7 +13,7 @@ struct RootView: View {
             } else {
                 TabView(selection: $model.tab) {
                     Tab("Inbox", systemImage: "tray", value: AppTab.inbox) { InboxView() }
-                        .badge(model.threads.reduce(0) { $0 + $1.unreadCount })
+                        .badge(model.threads.reduce(0) { $0 + ($1.archived ? 0 : $1.loudUnreadCount) })
                     Tab("Devices", systemImage: "iphone.gen3.radiowaves.left.and.right", value: AppTab.devices) { DevicesView() }
                     Tab("Settings", systemImage: "gearshape", value: AppTab.settings) { SettingsView() }
                 }

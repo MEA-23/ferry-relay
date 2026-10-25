@@ -23,6 +23,7 @@ struct SettingsView: View {
                     default:
                         Button("Allow notifications", systemImage: "bell") { model.requestNotifications() }
                     }
+                    NavigationLink { MutedView() } label: { Label("Muted", systemImage: "bell.slash") }
                 } footer: {
                     Text("Notifications are decrypted on this iPhone. Apple and the server only ever see “New message”.")
                 }
